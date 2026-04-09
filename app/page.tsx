@@ -154,6 +154,8 @@ const CATEGORY_OPTIONS: InventoryCategory[] = ['원료', '분쇄품', '스크랩
 export default function Page() {
   const router = useRouter();
 
+  const ADMIN_EMAIL = 'sj_advisory@naver.com'; // 본인 이메일로 바꿔요
+
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
@@ -316,14 +318,15 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
   }
 
   async function fetchMessages() {
-    const { data, error } = await supabase
-      .from('messages')
-      .select('id, content, message_type, created_at, user_id, user_email, user_name')
-      .order('created_at', { ascending: true });
+  const { data, error } = await supabase
+    .from('messages')
+    .select('id, content, message_type, created_at, user_id, user_email, user_name')
+    .order('created_at', { ascending: false })
+    .limit(200);
 
-    if (error) throw error;
-    setMessages((data ?? []) as MessageRow[]);
-  }
+  if (error) throw error;
+  setMessages(((data ?? []) as MessageRow[]).reverse());
+}
 
   async function fetchLogs() {
     const { data, error } = await supabase
@@ -1172,6 +1175,20 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
     }
   }
 
+  async function handleClearMessages() {
+  if (!window.confirm('채팅 기록을 모두 삭제할까요?')) return;
+  try {
+    setErrorText('');
+    const { error } = await supabase.from('messages').delete().neq('id', 0);
+    if (error) throw error;
+    setMessages([]);
+  } catch (error) {
+    setErrorText(getErrorMessage(error));
+  }
+}
+
+
+
   async function handleCreateItem() {
     const name = newItemName.trim();
     const stock = newItemStock.trim() === '' ? 0 : Number(newItemStock);
@@ -1533,6 +1550,17 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
               {stockManageMode && (
                 <div className="space-y-4">
                   <div className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm">
+                    {currentUserEmail === ADMIN_EMAIL && (
+  <div className="mb-4 rounded-3xl border border-red-200 bg-red-50 p-4 shadow-sm">
+    <p className="mb-3 text-sm font-semibold text-red-700">관리자 메뉴</p>
+    <button
+      onClick={() => void handleClearMessages()}
+      className="w-full rounded-2xl bg-red-600 px-4 py-3 text-sm font-semibold text-white"
+    >
+      채팅 기록 초기화
+    </button>
+  </div>
+)}
                     <p className="mb-3 text-sm font-semibold">직원 이름 관리</p>
                     <div className="space-y-3">
                       {profiles.length === 0 ? (
