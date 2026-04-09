@@ -1292,6 +1292,33 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
 
     await saveSystemMessage('알 수 없는 명령어야.');
   }
+  
+  async function handleImageUpload(file: File) {
+  if (!currentUserId) return;
+
+  try {
+    setSending(true);
+    const ext = file.name.split('.').pop();
+    const fileName = `${currentUserId}_${Date.now()}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('chat-images')
+      .upload(fileName, file);
+
+    if (uploadError) throw uploadError;
+
+    const { data } = supabase.storage
+      .from('chat-images')
+      .getPublicUrl(fileName);
+
+    await saveUserMessage(data.publicUrl, 'chat');
+  } catch (error) {
+    setErrorText(getErrorMessage(error));
+  } finally {
+    setSending(false);
+  }
+}
+
 
   async function handleSend() {
     const trimmed = input.trim();
@@ -1431,7 +1458,17 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
                             )}
                           </div>
 
-                          <p className="break-words whitespace-pre-wrap">{message.content}</p>
+                          {message.content.startsWith('https://') && 
+ message.content.includes('chat-images') ? (
+  <img 
+    src={message.content} 
+    alt="uploaded" 
+    className="max-w-full rounded-xl"
+  />
+) : (
+  <p className="break-words whitespace-pre-wrap">{message.content}</p>
+)}
+
                         </div>
 
                         <p
@@ -2183,6 +2220,20 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
 
             <div className="rounded-3xl border border-neutral-200 bg-white p-2 shadow-lg">
               <div className="flex items-end gap-2">
+                <label className="flex cursor-pointer items-center justify-center rounded-2xl border border-neutral-200 bg-white px-3 py-3">
+  <span className="text-lg">📷</span>
+  <input
+    type="file"
+    accept="image/*"
+    className="hidden"
+    onChange={(e) => {
+      const file = e.target.files?.[0];
+      if (file) void handleImageUpload(file);
+      e.target.value = '';
+    }}
+  />
+</label>
+
                 <button
                   onClick={() => openQuickPanel()}
                   type="button"
