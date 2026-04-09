@@ -2220,7 +2220,8 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
 
             <div className="rounded-3xl border border-neutral-200 bg-white p-2 shadow-lg">
               <div className="flex items-end gap-2">
-                <label className="flex cursor-pointer items-center justify-center rounded-2xl border border-neutral-200 bg-white px-3 py-3">
+                <label className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-50 text-lg">
+
   <span className="text-lg">📷</span>
   <input
     type="file"
@@ -2256,7 +2257,7 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
                   }}
                   placeholder="메시지 입력 또는 ⚡로 빠른입력"
                   rows={1}
-                  className="max-h-32 min-h-[44px] flex-1 resize-none rounded-2xl border-0 bg-transparent px-3 py-2 text-sm outline-none placeholder:text-neutral-400"
+                  className="max-h-32 min-h-[44px] flex-1 resize-none rounded-2xl border-0 bg-transparent px-3 py-2 text-sm outline-none placeholder:text-neutral-400 placeholder:text-sm"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
