@@ -194,13 +194,15 @@ export default function Page() {
   const [creatingItem, setCreatingItem] = useState(false);
 
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
 
-  function scrollToBottom() {
-    requestAnimationFrame(() => {
-      if (!chatScrollRef.current) return;
-      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-    });
-  }
+
+ function scrollToBottom() {
+  setTimeout(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'auto' });
+  }, 100);
+}
+
 
   useEffect(() => {
     void checkUser();
@@ -1302,7 +1304,7 @@ export default function Page() {
     }
   }
 
-  const chatBottomSpacerClass = quickPanel.isOpen ? 'h-[420px]' : 'h-[180px]';
+  const chatBottomSpacerClass = quickPanel.isOpen ? 'h-[420px]' : 'h-[0px]';
 
   if (checkingAuth) return null;
 
@@ -1341,7 +1343,7 @@ export default function Page() {
         <section
           className={cn(
             'flex-1',
-            activeTab === 'chat' ? 'pb-[320px]' : 'overflow-y-auto pb-24'
+            activeTab === 'chat' ? 'pb-[200px]' : 'overflow-y-auto pb-24'
           )}
         >
           {loading && messages.length === 0 && inventory.length === 0 && logs.length === 0 ? (
@@ -1351,7 +1353,8 @@ export default function Page() {
           ) : null}
 
           {!loading && activeTab === 'chat' && (
-            <div ref={chatScrollRef} className="h-full overflow-y-auto px-3 py-4">
+            <div ref={chatScrollRef} className="overflow-y-auto px-3 py-4" style={{ height: '100%' }}>
+
               <div className="mb-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
                 <p className="text-sm font-semibold">빠른 사용법</p>
                 <p className="mt-1 text-xs leading-5 text-neutral-500">
@@ -1424,6 +1427,8 @@ export default function Page() {
               </div>
 
               <div className={chatBottomSpacerClass} />
+<div ref={chatBottomRef} />
+
             </div>
           )}
 
