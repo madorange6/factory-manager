@@ -22,34 +22,38 @@ export default function LoginPage() {
     void checkSession();
   }, []);
 
-  async function checkSession() {
-  const { data, error } = await supabase.auth.getSession();
-
-  if (error) {
-    console.error(error);
-    return;
-  }
-
-  if (data.session) {
+async function checkSession() {
+  const { data } = await supabase.auth.getSession();
+  if (data.session?.user) {
     router.replace('/');
   }
 }
 
+
   async function ensureProfile(user: { id: string; email?: string | null }, inputName?: string) {
-    const email = user.email ?? null;
-    const baseName = (inputName && inputName.trim()) || fallbackName(email);
+  const email = user.email ?? null;
 
-    const { error } = await supabase.from('profiles').upsert(
-      {
-        id: user.id,
-        email,
-        name: baseName,
-      },
-      { onConflict: 'id' }
-    );
+  const { data: existing } = await supabase
+    .from('profiles')
+    .select('id, email, name')
+    .eq('id', user.id)
+    .maybeSingle();
 
-    if (error) throw error;
+  // 회원가입할 때만 이름 저장, 이미 이름 있으면 덮어쓰지 않음
+  if (existing?.name && !inputName) {
+    return;
   }
+
+  const baseName = (inputName && inputName.trim()) || fallbackName(email);
+
+  const { error } = await supabase.from('profiles').upsert(
+    { id: user.id, email, name: baseName },
+    { onConflict: 'id' }
+  );
+
+  if (error) throw error;
+}
+
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -122,7 +126,8 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md items-center justify-center p-4">
+    <main className="flex min-h-screen w-full items-center justify-center p-4">
+
       <div className="w-full rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
         <h1 className="mb-2 text-2xl font-bold">공장 재고관리</h1>
         <p className="mb-6 text-sm text-neutral-500">
@@ -161,7 +166,8 @@ export default function LoginPage() {
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full rounded-xl border border-neutral-200 p-3"
+                className="w-full rounded-xl border border-neutral-200 p-3 text-neutral-900"
+
                 placeholder="이름 입력"
               />
             </div>
@@ -173,7 +179,8 @@ export default function LoginPage() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-xl border border-neutral-200 p-3"
+              className="w-full rounded-xl border border-neutral-200 p-3 text-neutral-900"
+
               placeholder="example@email.com"
             />
           </div>
@@ -184,7 +191,8 @@ export default function LoginPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-xl border border-neutral-200 p-3"
+              className="w-full rounded-xl border border-neutral-200 p-3 text-neutral-900"
+
               placeholder="비밀번호 입력"
             />
           </div>

@@ -239,14 +239,12 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
   async function ensureUserProfile(user: { id: string; email?: string | null }) {
   const email = user.email ?? null;
 
-  // 기존 프로필 먼저 확인
   const { data: existing } = await supabase
     .from('profiles')
     .select('id, email, name')
     .eq('id', user.id)
-    .single();
+    .maybeSingle(); // single() 대신 maybeSingle() 로 변경
 
-  // 이미 이름이 있으면 덮어쓰지 않음
   if (existing?.name) {
     return existing as UserProfile;
   }
@@ -263,7 +261,7 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
     .from('profiles')
     .select('id, email, name')
     .eq('id', user.id)
-    .single();
+    .maybeSingle(); // 여기도 변경
 
   if (error) throw error;
   return data as UserProfile | null;
