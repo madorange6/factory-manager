@@ -235,30 +235,37 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
   }, [profiles]);
 
   async function ensureUserProfile(user: { id: string; email?: string | null }) {
-    const email = user.email ?? null;
-    const baseName = fallbackName(email);
+  const email = user.email ?? null;
 
-    const { error: upsertError } = await supabase.from('profiles').upsert(
-      {
-        id: user.id,
-        email,
-        name: baseName,
-      },
-      { onConflict: 'id' }
-    );
+  // 기존 프로필 먼저 확인
+  const { data: existing } = await supabase
+    .from('profiles')
+    .select('id, email, name')
+    .eq('id', user.id)
+    .single();
 
-    if (upsertError) throw upsertError;
-
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, email, name')
-      .eq('id', user.id)
-      .single();
-
-    if (error) throw error;
-
-    return data as UserProfile | null;
+  // 이미 이름이 있으면 덮어쓰지 않음
+  if (existing?.name) {
+    return existing as UserProfile;
   }
+
+  const baseName = fallbackName(email);
+  const { error: upsertError } = await supabase.from('profiles').upsert(
+    { id: user.id, email, name: baseName },
+    { onConflict: 'id' }
+  );
+
+  if (upsertError) throw upsertError;
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, email, name')
+    .eq('id', user.id)
+    .single();
+
+  if (error) throw error;
+  return data as UserProfile | null;
+}
 
   async function checkUser() {
     try {
