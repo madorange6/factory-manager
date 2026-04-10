@@ -16,6 +16,7 @@ type InventoryItem = {
   current_stock: number;
   unit: string;
   category?: string | null;
+  memo?: string | null;
 };
 
 type MessageRow = {
@@ -194,7 +195,7 @@ export default function Page() {
   const [editingItemId, setEditingItemId] = useState<number | null>(null);
   const [editingItemName, setEditingItemName] = useState('');
   const [editingItemStock, setEditingItemStock] = useState('');
-
+  const [editingItemMemo, setEditingItemMemo] = useState('');
   const [newItemName, setNewItemName] = useState('');
   const [newItemUnit, setNewItemUnit] = useState('kg');
   const [newItemStock, setNewItemStock] = useState('');
@@ -314,7 +315,7 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
   async function fetchInventory() {
     const { data, error } = await supabase
       .from('inventory_items')
-      .select('id, name, current_stock, unit, category')
+      .select('id, name, current_stock, unit, category, memo')
       .order('name', { ascending: true });
 
     if (error) throw error;
@@ -1249,7 +1250,7 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
     setErrorText('');
     const { error } = await supabase
       .from('inventory_items')
-      .update({ name, current_stock: stock, category })
+      .update({ name, current_stock: stock, category, memo: editingItemMemo })
       .eq('id', itemId);
 
     if (error) throw error;
@@ -1620,6 +1621,9 @@ async function handleDeleteItem(itemId: number) {
                               <p className="mt-1 text-xs text-neutral-500">
                                 {normalizeCategory(item.category)}
                               </p>
+                              {item.memo && (
+  <p className="mt-1 text-xs text-blue-500">{item.memo}</p>
+)}
                             </div>
 
                             <div className="shrink-0 text-right">
@@ -1762,11 +1766,19 @@ async function handleDeleteItem(itemId: number) {
         />
         <input
           value={editingItemStock}
+          
           onChange={(e) => setEditingItemStock(e.target.value)}
           placeholder="재고량"
           inputMode="decimal"
           className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
         />
+        <textarea
+  value={editingItemMemo}
+  onChange={(e) => setEditingItemMemo(e.target.value)}
+  placeholder="메모 (선택)"
+  className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400 resize-none"
+  rows={2}
+/>
         <div className="grid grid-cols-3 gap-2">
           {CATEGORY_OPTIONS.map((category) => (
             <button
@@ -1826,6 +1838,7 @@ async function handleDeleteItem(itemId: number) {
               setEditingItemId(item.id);
               setEditingItemName(item.name);
               setEditingItemStock(String(item.current_stock));
+              setEditingItemMemo(item.memo ?? '');
             }}
             className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm font-semibold text-neutral-700"
           >
