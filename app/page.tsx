@@ -188,6 +188,10 @@ export default function Page() {
   const [savingCategoryId, setSavingCategoryId] = useState<number | null>(null);
   const [savingProfileId, setSavingProfileId] = useState<string | null>(null);
   const [deletingLogId, setDeletingLogId] = useState<number | null>(null);
+  
+  const [editingItemId, setEditingItemId] = useState<number | null>(null);
+  const [editingItemName, setEditingItemName] = useState('');
+  const [editingItemStock, setEditingItemStock] = useState('');
 
   const [newItemName, setNewItemName] = useState('');
   const [newItemUnit, setNewItemUnit] = useState('kg');
@@ -309,7 +313,7 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
     const { data, error } = await supabase
       .from('inventory_items')
       .select('id, name, current_stock, unit, category')
-      .order('id', { ascending: true });
+      .order('name', { ascending: true });
 
     if (error) throw error;
     setInventory((data ?? []) as InventoryItem[]);
@@ -1222,6 +1226,55 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
     }
   }
 
+  async function handleUpdateItem(itemId: number) {
+  const name = editingItemName.trim();
+  const stock = Number(editingItemStock);
+  const category = categoryDrafts[itemId];
+
+  if (!name) {
+    setErrorText('품목명을 입력해줘.');
+    return;
+  }
+
+  if (!Number.isFinite(stock) || stock < 0) {
+    setErrorText('재고는 0 이상 숫자로 입력해줘.');
+    return;
+  }
+
+  try {
+    setErrorText('');
+    const { error } = await supabase
+      .from('inventory_items')
+      .update({ name, current_stock: stock, category })
+      .eq('id', itemId);
+
+    if (error) throw error;
+    setEditingItemId(null);
+    await fetchInventory();
+  } catch (error) {
+    setErrorText(getErrorMessage(error));
+  }
+}
+
+
+async function handleDeleteItem(itemId: number) {
+  if (!window.confirm('이 품목을 삭제할까요? 관련 로그도 확인해줘.')) return;
+
+  try {
+    setErrorText('');
+    const { error } = await supabase
+      .from('inventory_items')
+      .delete()
+      .eq('id', itemId);
+
+    if (error) throw error;
+    await fetchInventory();
+  } catch (error) {
+    setErrorText(getErrorMessage(error));
+  }
+}
+
+
   async function processLegacyCommand(raw: string) {
     const text = raw.trim();
     const parts = text.split(/\s+/);
@@ -1691,54 +1744,99 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
 
                   <div className="space-y-3">
                     {inventory.map((item) => (
-                      <div
-                        key={item.id}
-                        className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm"
-                      >
-                        <div className="mb-3">
-                          <p className="text-base font-semibold">{item.name}</p>
-                          <p className="mt-1 text-xs text-neutral-500">
-                            현재: {Number(item.current_stock).toLocaleString()}
-                            {item.unit}
-                          </p>
-                        </div>
-
-                        <div className="grid grid-cols-3 gap-2">
-                          {CATEGORY_OPTIONS.map((category) => (
-                            <button
-                              key={category}
-                              onClick={() =>
-                                setCategoryDrafts((prev) => ({
-                                  ...prev,
-                                  [item.id]: category,
-                                }))
-                              }
-                              className={cn(
-                                'rounded-2xl border px-3 py-3 text-sm font-medium',
-                                categoryDrafts[item.id] === category
-                                  ? 'border-neutral-900 bg-neutral-900 text-white'
-                                  : 'border-neutral-200 bg-neutral-50 text-neutral-700'
-                              )}
-                            >
-                              {category}
-                            </button>
-                          ))}
-                        </div>
-
-                        <button
-                          onClick={() => void handleSaveCategory(item.id)}
-                          disabled={savingCategoryId === item.id}
-                          className="mt-3 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-semibold text-neutral-700 disabled:opacity-50"
-                        >
-                          {savingCategoryId === item.id ? '저장중' : '카테고리 저장'}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+  <div
+    key={item.id}
+    className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm"
+  >
+    {editingItemId === item.id ? (
+      <div className="space-y-2">
+        <input
+          value={editingItemName}
+          onChange={(e) => setEditingItemName(e.target.value)}
+          placeholder="품목명"
+          className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+        />
+        <input
+          value={editingItemStock}
+          onChange={(e) => setEditingItemStock(e.target.value)}
+          placeholder="재고량"
+          inputMode="decimal"
+          className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+        />
+        <div className="grid grid-cols-3 gap-2">
+          {CATEGORY_OPTIONS.map((category) => (
+            <button
+              key={category}
+              onClick={() =>
+                setCategoryDrafts((prev) => ({
+                  ...prev,
+                  [item.id]: category,
+                }))
+              }
+              className={cn(
+                'rounded-2xl border px-3 py-3 text-sm font-medium',
+                categoryDrafts[item.id] === category
+                  ? 'border-neutral-900 bg-neutral-900 text-white'
+                  : 'border-neutral-200 bg-neutral-50 text-neutral-700'
               )}
-            </div>
-          )}
+            >
+              {category}
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => void handleUpdateItem(item.id)}
+            className="rounded-2xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white"
+          >
+            저장
+          </button>
+          <button
+            onClick={() => setEditingItemId(null)}
+            className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-semibold text-neutral-700"
+          >
+            취소
+          </button>
+        </div>
+        <button
+          onClick={() => void handleDeleteItem(item.id)}
+          className="w-full rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700"
+        >
+          품목 삭제
+        </button>
+      </div>
+    ) : (
+      <div>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <p className="text-base font-semibold">{item.name}</p>
+            <p className="mt-1 text-xs text-neutral-500">
+              현재: {Number(item.current_stock).toLocaleString()}{item.unit}
+            </p>
+            <p className="mt-1 text-xs text-neutral-400">
+              {normalizeCategory(item.category)}
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setEditingItemId(item.id);
+              setEditingItemName(item.name);
+              setEditingItemStock(String(item.current_stock));
+            }}
+            className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm font-semibold text-neutral-700"
+          >
+            수정
+          </button>
+        </div>
+      </div>
+    )}
+  </div>
+))}
+</div>
+</div>
+)}
+</div>
+)}
 
           {!loading && activeTab === 'logs' && (
             <div className="px-3 py-4">
