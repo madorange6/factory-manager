@@ -182,6 +182,8 @@ export default function Page() {
   const [quickPanel, setQuickPanel] = useState<QuickPanelState>(EMPTY_PANEL);
   const [quickPanelError, setQuickPanelError] = useState('');
 
+  const [ItemModalOpen, setItemModalOpen] = useState(false);
+
   const [stockManageMode, setStockManageMode] = useState(false);
   const [categoryDrafts, setCategoryDrafts] = useState<Record<number, string>>({});
   const [userNameDrafts, setUserNameDrafts] = useState<Record<string, string>>({});
@@ -719,6 +721,7 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
   function closeQuickPanel() {
     setQuickPanel({ ...EMPTY_PANEL });
     setQuickPanelError('');
+    setItemModalOpen(false);
     setTimeout(() => {
       scrollToBottom();
     }, 10);
@@ -742,6 +745,7 @@ const chatBottomRef = useRef<HTMLDivElement | null>(null); // 추가
       targetKgQty: '',
     }));
     setQuickPanelError('');
+    setItemModalOpen(false);
     setTimeout(() => {
       scrollToBottom();
     }, 10);
@@ -2211,25 +2215,45 @@ async function handleDeleteItem(itemId: number) {
                       <div className="max-h-24 overflow-y-auto">
                         <div className="flex flex-wrap gap-2">
                           {quickPanelItems.length === 0 ? (
-                            <p className="text-xs text-neutral-500">
-                              선택 가능한 기존 품목이 없어. 직접 입력해도 돼.
-                            </p>
-                          ) : (
-                            quickPanelItems.map((item) => (
-                              <button
-                                key={item.id}
-                                onClick={() => selectQuickItem(item)}
-                                className={cn(
-                                  'rounded-full border px-3 py-2 text-sm',
-                                  quickPanel.selectedItemId === item.id
-                                    ? 'border-neutral-900 bg-neutral-900 text-white'
-                                    : 'border-neutral-200 bg-neutral-50 text-neutral-700'
-                                )}
-                              >
-                                {item.name}
-                              </button>
-                            ))
-                          )}
+  <p className="text-xs text-neutral-500">
+    선택 가능한 기존 품목이 없어. 직접 입력해도 돼.
+  </p>
+) : (
+  <div className="relative w-full">
+    <button
+      onClick={() => setItemModalOpen((prev) => !prev)}
+      className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-left text-sm text-neutral-700"
+    >
+      {quickPanel.selectedItemId
+        ? quickPanelItems.find((i) => i.id === quickPanel.selectedItemId)?.name
+        : '품목 선택'}
+      <span className="float-right">{ItemModalOpen ? '▲' : '▼'}</span>
+    </button>
+
+    {ItemModalOpen && (
+      <div className="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto rounded-2xl border border-neutral-200 bg-white shadow-lg">
+        {quickPanelItems.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => {
+              selectQuickItem(item);
+              setItemModalOpen(false);
+            }}
+            className={cn(
+              'w-full px-4 py-3 text-left text-sm',
+              quickPanel.selectedItemId === item.id
+                ? 'bg-neutral-900 text-white'
+                : 'text-neutral-700 hover:bg-neutral-50'
+            )}
+          >
+            {item.name}
+          </button>
+        ))}
+      </div>
+    )}
+  </div>
+)}
+
                         </div>
                       </div>
 
@@ -2398,6 +2422,38 @@ async function handleDeleteItem(itemId: number) {
           </div>
         </nav>
       </div>
+      {ItemModalOpen && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+    onClick={() => setItemModalOpen(false)}>
+    <div className="w-full max-w-md rounded-3xl bg-white p-4 pb-8"
+      onClick={(e) => e.stopPropagation()}>
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-sm font-semibold">품목 선택</p>
+        <button onClick={() => setItemModalOpen(false)}
+          className="rounded-full border border-neutral-200 px-3 py-1 text-xs">
+          닫기
+        </button>
+      </div>
+      <div className="max-h-80 overflow-y-auto space-y-2">
+        {quickPanelItems.map((item) => (
+          <button key={item.id}
+            onClick={() => {
+              selectQuickItem(item);
+              setItemModalOpen(false);
+            }}
+            className={cn(
+              'w-full rounded-2xl border px-4 py-3 text-left text-sm font-medium',
+              quickPanel.selectedItemId === item.id
+                ? 'border-neutral-900 bg-neutral-900 text-white'
+                : 'border-neutral-200 bg-neutral-50 text-neutral-700'
+            )}>
+            {item.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  </div>
+)}
     </main>
   );
 }
