@@ -580,7 +580,7 @@ export default function Page() {
 
       // 유효한 소스 필터링
       const validSources = quickPanel.sources.filter((src) => src.itemId !== null && src.bagQty.trim() !== '');
-      if (validSources.length === 0) { setQuickPanelError('사용 품목과 수량을 입력해줘.'); return; }
+      
 
       // 재고 부족 체크
       for (const src of validSources) {
