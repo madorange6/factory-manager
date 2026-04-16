@@ -49,6 +49,7 @@ type UserProfile = {
 
 type ProductionSource = {
   itemId: number | null;
+  customName: string;
   bagQty: string;
 };
 
@@ -146,7 +147,7 @@ const EMPTY_PANEL: QuickPanelState = {
   kgQty: '',
 
   productionType: null,
-  sources: [{ itemId: null, bagQty: '' }],
+  sources: [{ itemId: null, customName: '', bagQty: '' }],
   targetItemId: null,
   targetItemName: '',
   targetBagQty: '',
@@ -408,7 +409,8 @@ export default function Page() {
 
       quickPanel.sources.forEach((src, i) => {
         const srcItem = inventory.find((item) => item.id === src.itemId);
-        if (srcItem) parts.push(`사용${i + 1}:${srcItem.name} ${src.bagQty}bag`);
+        const name = srcItem?.name || src.customName;
+        if (name && src.bagQty) parts.push(`사용${i + 1}:${name} ${src.bagQty}bag`);
       });
 
       const targetItem = inventory.find((item) => item.id === quickPanel.targetItemId) ?? existingProductionTargetItem ?? null;
@@ -526,7 +528,7 @@ export default function Page() {
       bagQty: '',
       kgQty: '',
       productionType: null,
-      sources: [{ itemId: null, bagQty: '' }],
+      sources: [{ itemId: null, customName: '', bagQty: '' }],
       targetItemId: null,
       targetItemName: '',
       targetBagQty: '',
@@ -546,7 +548,7 @@ export default function Page() {
     setQuickPanel((prev) => ({
       ...prev,
       productionType: type,
-      sources: [{ itemId: null, bagQty: '' }],
+      sources: [{ itemId: null, customName: '', bagQty: '' }],
       targetItemId: null,
       targetItemName: '',
       targetBagQty: '',
@@ -578,12 +580,12 @@ export default function Page() {
       const productionType = quickPanel.productionType;
       if (!productionType) { setQuickPanelError('생산 종류를 먼저 선택해줘.'); return; }
 
-      // 유효한 소스 필터링
-      const validSources = quickPanel.sources.filter((src) => src.itemId !== null && src.bagQty.trim() !== '');
-      
+      // 유효한 소스 필터링 (재고 품목 선택 or 직접입력 + bag수량 있는 것만)
+     const validSources = quickPanel.sources.filter((src) => (src.itemId !== null || (src.customName ?? '').trim() !== '') && (src.bagQty ?? '').trim() !== '');
 
-      // 재고 부족 체크
+      // 재고 부족 체크 (재고 품목 선택한 것만)
       for (const src of validSources) {
+        if (src.itemId === null) continue;
         const srcItem = inventory.find((item) => item.id === src.itemId);
         if (!srcItem) continue;
         const qty = Number(src.bagQty);
@@ -604,17 +606,19 @@ export default function Page() {
       if (!targetItem) { setQuickPanelError('결과 품목을 확인해줘.'); return; }
 
       const sourceNames = validSources.map((src) => {
-        const srcItem = inventory.find((item) => item.id === src.itemId)!;
-        return `${srcItem.name} ${src.bagQty}bag`;
+        const srcItem = src.itemId ? inventory.find((item) => item.id === src.itemId) : null;
+        const name = srcItem?.name || src.customName;
+        return `${name} ${src.bagQty}bag`;
       }).join(', ');
 
       if (productionType === '원료생산') {
         const targetKgQty = Number(quickPanel.targetKgQty);
         if (!Number.isFinite(targetKgQty) || targetKgQty <= 0) { setQuickPanelError('생산된 원료 kg를 입력해줘.'); return; }
 
-        await saveUserMessage(`생산 원료생산 사용:${sourceNames} 결과:${targetItem.name} ${targetKgQty}kg`, 'chat');
+        await saveUserMessage(`생산 원료생산 사용:${sourceNames || '없음'} 결과:${targetItem.name} ${targetKgQty}kg`, 'chat');
 
         for (const src of validSources) {
+          if (src.itemId === null) continue;
           const srcItem = inventory.find((item) => item.id === src.itemId)!;
           const qty = Number(src.bagQty);
           await updateInventoryStock(srcItem.id, Number(srcItem.current_stock) - qty);
@@ -622,8 +626,8 @@ export default function Page() {
         }
 
         await updateInventoryStock(targetItem.id, Number(targetItem.current_stock ?? 0) + targetKgQty);
-        await insertLog(targetItem.id, 'in', targetKgQty, `production_result:원료생산:${sourceNames}`);
-        await saveSystemMessage(`${sourceNames} 사용, ${targetItem.name} ${targetKgQty}kg 생산 완료.`);
+        await insertLog(targetItem.id, 'in', targetKgQty, `production_result:원료생산:${sourceNames || '없음'}`);
+        await saveSystemMessage(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetKgQty}kg 생산 완료.`);
         closeQuickPanel();
         await fetchAll();
         return;
@@ -633,9 +637,10 @@ export default function Page() {
         const targetBagQty = Number(quickPanel.targetBagQty);
         if (!Number.isFinite(targetBagQty) || targetBagQty <= 0) { setQuickPanelError('생산된 분쇄품 bag 수를 입력해줘.'); return; }
 
-        await saveUserMessage(`생산 분쇄품생산 사용:${sourceNames} 결과:${targetItem.name} ${targetBagQty}bag`, 'chat');
+        await saveUserMessage(`생산 분쇄품생산 사용:${sourceNames || '없음'} 결과:${targetItem.name} ${targetBagQty}bag`, 'chat');
 
         for (const src of validSources) {
+          if (src.itemId === null) continue;
           const srcItem = inventory.find((item) => item.id === src.itemId)!;
           const qty = Number(src.bagQty);
           await updateInventoryStock(srcItem.id, Number(srcItem.current_stock) - qty);
@@ -643,8 +648,8 @@ export default function Page() {
         }
 
         await updateInventoryStock(targetItem.id, Number(targetItem.current_stock ?? 0) + targetBagQty);
-        await insertLog(targetItem.id, 'in', targetBagQty, `production_result:분쇄품생산:${sourceNames}`);
-        await saveSystemMessage(`${sourceNames} 사용, ${targetItem.name} ${targetBagQty}bag 생산 완료.`);
+        await insertLog(targetItem.id, 'in', targetBagQty, `production_result:분쇄품생산:${sourceNames || '없음'}`);
+        await saveSystemMessage(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetBagQty}bag 생산 완료.`);
         closeQuickPanel();
         await fetchAll();
         return;
@@ -1214,49 +1219,63 @@ export default function Page() {
                             </p>
 
                             {quickPanel.sources.map((src, index) => (
-                              <div key={index} className="mb-2 flex gap-2">
-                                <select
-                                  value={src.itemId ?? ''}
-                                  onChange={(e) => {
-                                    const newSources = [...quickPanel.sources];
-                                    newSources[index] = { ...newSources[index], itemId: e.target.value ? Number(e.target.value) : null };
-                                    setQuickPanel((prev) => ({ ...prev, sources: newSources }));
-                                  }}
-                                  className="flex-1 rounded-2xl border border-neutral-200 bg-white px-3 py-3 text-sm outline-none focus:border-neutral-400"
-                                >
-                                  <option value="">품목 선택</option>
-                                  {productionSourceItems.map((item) => (
-                                    <option key={item.id} value={item.id}>{item.name}</option>
-                                  ))}
-                                </select>
-                                <input
-                                  value={src.bagQty}
-                                  onChange={(e) => {
-                                    const newSources = [...quickPanel.sources];
-                                    newSources[index] = { ...newSources[index], bagQty: e.target.value };
-                                    setQuickPanel((prev) => ({ ...prev, sources: newSources }));
-                                    setQuickPanelError('');
-                                  }}
-                                  placeholder="bag"
-                                  inputMode="numeric"
-                                  className="w-20 rounded-2xl border border-neutral-200 bg-white px-3 py-3 text-sm outline-none focus:border-neutral-400"
-                                />
-                                {quickPanel.sources.length > 1 && (
-                                  <button
-                                    onClick={() => {
-                                      const newSources = quickPanel.sources.filter((_, i) => i !== index);
+                              <div key={index} className="mb-2 space-y-1">
+                                <div className="flex gap-2">
+                                  <select
+                                    value={src.itemId ?? ''}
+                                    onChange={(e) => {
+                                      const newSources = [...quickPanel.sources];
+                                      newSources[index] = { ...newSources[index], itemId: e.target.value ? Number(e.target.value) : null, customName: '' };
                                       setQuickPanel((prev) => ({ ...prev, sources: newSources }));
                                     }}
-                                    className="rounded-2xl border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-600"
+                                    className="flex-1 rounded-2xl border border-neutral-200 bg-white px-3 py-3 text-sm outline-none focus:border-neutral-400"
                                   >
-                                    ✕
-                                  </button>
+                                    <option value="">재고 품목 선택</option>
+                                    {productionSourceItems.map((item) => (
+                                      <option key={item.id} value={item.id}>{item.name}</option>
+                                    ))}
+                                  </select>
+                                  <input
+                                    value={src.bagQty}
+                                    onChange={(e) => {
+                                      const newSources = [...quickPanel.sources];
+                                      newSources[index] = { ...newSources[index], bagQty: e.target.value };
+                                      setQuickPanel((prev) => ({ ...prev, sources: newSources }));
+                                      setQuickPanelError('');
+                                    }}
+                                    placeholder="bag"
+                                    inputMode="numeric"
+                                    className="w-20 rounded-2xl border border-neutral-200 bg-white px-3 py-3 text-sm outline-none focus:border-neutral-400"
+                                  />
+                                  {quickPanel.sources.length > 1 && (
+                                    <button
+                                      onClick={() => {
+                                        const newSources = quickPanel.sources.filter((_, i) => i !== index);
+                                        setQuickPanel((prev) => ({ ...prev, sources: newSources }));
+                                      }}
+                                      className="rounded-2xl border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-600"
+                                    >
+                                      ✕
+                                    </button>
+                                  )}
+                                </div>
+                                {!src.itemId && (
+                                  <input
+                                    value={src.customName ?? ''}
+                                    onChange={(e) => {
+                                      const newSources = [...quickPanel.sources];
+                                      newSources[index] = { ...newSources[index], customName: e.target.value };
+                                      setQuickPanel((prev) => ({ ...prev, sources: newSources }));
+                                    }}
+                                    placeholder="또는 직접 입력 (재고 미반영)"
+                                    className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400 placeholder:text-neutral-400"
+                                  />
                                 )}
                               </div>
                             ))}
 
                             <button
-                              onClick={() => setQuickPanel((prev) => ({ ...prev, sources: [...prev.sources, { itemId: null, bagQty: '' }] }))}
+                              onClick={() => setQuickPanel((prev) => ({ ...prev, sources: [...prev.sources, { itemId: null, customName: '', bagQty: '' }] }))}
                               className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-600"
                             >
                               + 품목 추가
