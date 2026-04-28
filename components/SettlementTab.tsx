@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase/client';
-import { Company, Invoice, InvoiceItem } from '../lib/types';
+import { Company, Invoice, InvoiceItem, Payment } from '../lib/types';
 import { cn, formatCurrency, getErrorMessage, todayString } from '../lib/utils';
 
 type Props = {
   companies: Company[];
 };
 
-type InvoiceWithItems = Invoice & { items: InvoiceItem[] };
+type InvoiceWithItems = Invoice & { items: InvoiceItem[]; payments: Payment[] };
 
 type InvoiceItemDraft = {
   item_name: string;
@@ -29,6 +29,27 @@ const EMPTY_ITEM_DRAFT: InvoiceItemDraft = {
 
 type StatusFilter = 'all' | 'pending' | 'done';
 type FactoryFilter = 'all' | '1공장' | '2공장';
+type DirectionFilter = 'all' | 'receivable' | 'payable';
+
+type PaymentModal = {
+  open: boolean;
+  invoiceId: number | null;
+  date: string;
+  amount: string;
+  memo: string;
+  saving: boolean;
+  error: string;
+};
+
+const EMPTY_PAYMENT_MODAL: PaymentModal = {
+  open: false,
+  invoiceId: null,
+  date: todayString(),
+  amount: '',
+  memo: '',
+  saving: false,
+  error: '',
+};
 
 export default function SettlementTab({ companies }: Props) {
   const [invoices, setInvoices] = useState<InvoiceWithItems[]>([]);
@@ -36,25 +57,26 @@ export default function SettlementTab({ companies }: Props) {
   const [errorText, setErrorText] = useState('');
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all');
   const [summaryFactoryFilter, setSummaryFactoryFilter] = useState<FactoryFilter>('all');
   const [companySearch, setCompanySearch] = useState('');
 
-  // 그룹 토글 상태
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   const [showForm, setShowForm] = useState(false);
   const [editingInvoiceId, setEditingInvoiceId] = useState<number | null>(null);
 
-  // 폼 상태
   const [formDate, setFormDate] = useState(todayString());
   const [formCompanyId, setFormCompanyId] = useState<number | null>(null);
   const [formCompanyName, setFormCompanyName] = useState('');
   const [formDirection, setFormDirection] = useState<'receivable' | 'payable'>('receivable');
   const [formNote, setFormNote] = useState('');
-  const [formFactory, setFormFactory] = useState<string | null>(null); // null=미발행
+  const [formFactory, setFormFactory] = useState<string | null>(null);
   const [formItems, setFormItems] = useState<InvoiceItemDraft[]>([{ ...EMPTY_ITEM_DRAFT }]);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const [paymentModal, setPaymentModal] = useState<PaymentModal>(EMPTY_PAYMENT_MODAL);
 
   useEffect(() => { void fetchInvoices(); }, []);
 
@@ -63,7 +85,7 @@ export default function SettlementTab({ companies }: Props) {
       setLoading(true);
       const { data, error } = await supabase
         .from('invoices')
-        .select('*, items:invoice_items(*)')
+        .select('*, items:invoice_items(*), payments:payments(*)')
         .order('date', { ascending: false });
       if (error) throw error;
       setInvoices((data ?? []) as InvoiceWithItems[]);
@@ -80,42 +102,50 @@ export default function SettlementTab({ companies }: Props) {
     return { supply, tax, total: supply + tax };
   }
 
+  function calcPaid(payments: Payment[]) {
+    return payments.reduce((s, p) => s + Number(p.amount), 0);
+  }
+
   function calcDraftTotals(items: InvoiceItemDraft[]) {
     const supply = items.reduce((s, i) => s + (Number(i.supply_amount) || 0), 0);
     const tax = items.reduce((s, i) => s + (Number(i.tax_amount) || 0), 0);
     return { supply, tax, total: supply + tax };
   }
 
-  // 요약 카드: summaryFactoryFilter 기준으로 미처리 금액
-  function getUnpaidTotal(direction: 'receivable' | 'payable') {
+  // 요약 카드: 미수금/미지급금 = (total - paidSum) for unpaid invoices
+  function getUnpaidRemaining(direction: 'receivable' | 'payable') {
     return invoices
       .filter((inv) => {
         if (inv.payment_done) return false;
         if (inv.direction !== direction) return false;
-        if (summaryFactoryFilter === 'all') return true;
-        return inv.factory === summaryFactoryFilter;
+        if (directionFilter !== 'all' && inv.direction !== directionFilter) return false;
+        if (summaryFactoryFilter !== 'all' && inv.factory !== summaryFactoryFilter) return false;
+        return true;
       })
-      .reduce((s, inv) => s + calcItemTotals(inv.items).total, 0);
+      .reduce((s, inv) => {
+        const total = calcItemTotals(inv.items).total;
+        const paid = calcPaid(inv.payments);
+        return s + Math.max(0, total - paid);
+      }, 0);
   }
 
-  const totalReceivable = getUnpaidTotal('receivable');
-  const totalPayable = getUnpaidTotal('payable');
+  const totalReceivable = getUnpaidRemaining('receivable');
+  const totalPayable = getUnpaidRemaining('payable');
 
   // 필터링 + 그룹핑
   const filteredInvoices = invoices.filter((inv) => {
     if (statusFilter === 'pending' && inv.payment_done) return false;
     if (statusFilter === 'done' && !inv.payment_done) return false;
+    if (directionFilter !== 'all' && inv.direction !== directionFilter) return false;
     if (companySearch.trim() && !inv.company_name.includes(companySearch.trim())) return false;
     return true;
   });
 
-  // 거래처별 그룹 (가나다순)
   const groupMap = new Map<string, InvoiceWithItems[]>();
   for (const inv of filteredInvoices) {
     if (!groupMap.has(inv.company_name)) groupMap.set(inv.company_name, []);
     groupMap.get(inv.company_name)!.push(inv);
   }
-  // 날짜 오름차순 정렬
   for (const [, invs] of groupMap) {
     invs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }
@@ -280,6 +310,46 @@ export default function SettlementTab({ companies }: Props) {
     }
   }
 
+  // 입금내역 추가
+  async function handleAddPayment() {
+    if (!paymentModal.invoiceId) return;
+    const amount = Number(paymentModal.amount);
+    if (!amount || amount <= 0) {
+      setPaymentModal((prev) => ({ ...prev, error: '금액을 입력해줘.' }));
+      return;
+    }
+    if (!paymentModal.date) {
+      setPaymentModal((prev) => ({ ...prev, error: '날짜를 입력해줘.' }));
+      return;
+    }
+
+    try {
+      setPaymentModal((prev) => ({ ...prev, saving: true, error: '' }));
+      const { error: payError } = await supabase.from('payments').insert({
+        invoice_id: paymentModal.invoiceId,
+        amount,
+        date: paymentModal.date,
+        memo: paymentModal.memo.trim() || null,
+      });
+      if (payError) throw payError;
+
+      // 결제 완료 자동 체크: 합산 >= total 이면 payment_done = true
+      const inv = invoices.find((i) => i.id === paymentModal.invoiceId);
+      if (inv) {
+        const total = calcItemTotals(inv.items).total;
+        const newPaid = calcPaid(inv.payments) + amount;
+        if (newPaid >= total && !inv.payment_done) {
+          await supabase.from('invoices').update({ payment_done: true }).eq('id', inv.id);
+        }
+      }
+
+      setPaymentModal(EMPTY_PAYMENT_MODAL);
+      await fetchInvoices();
+    } catch (error) {
+      setPaymentModal((prev) => ({ ...prev, saving: false, error: getErrorMessage(error) }));
+    }
+  }
+
   // ── 폼 화면 ──
   if (showForm) {
     const draftTotals = calcDraftTotals(formItems);
@@ -352,7 +422,6 @@ export default function SettlementTab({ companies }: Props) {
             </div>
           </div>
 
-          {/* 품목 라인 */}
           <div className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm">
             <p className="mb-3 text-sm font-semibold">품목 라인</p>
             <div className="space-y-4">
@@ -391,7 +460,6 @@ export default function SettlementTab({ companies }: Props) {
             </button>
           </div>
 
-          {/* 합계 미리보기 */}
           <div className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm">
             <p className="mb-2 text-sm font-semibold">합계 미리보기</p>
             <div className="space-y-1 text-sm">
@@ -441,7 +509,20 @@ export default function SettlementTab({ companies }: Props) {
         </div>
       </div>
 
-      {/* 필터 */}
+      {/* 방향 필터 [전체][매출][매입] */}
+      <div className="mb-2 flex gap-2">
+        {([['all', '전체'], ['receivable', '매출'], ['payable', '매입']] as [DirectionFilter, string][]).map(([val, label]) => (
+          <button
+            key={val}
+            onClick={() => setDirectionFilter(val)}
+            className={cn('flex-1 rounded-2xl border py-2 text-sm font-medium', directionFilter === val ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-600')}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* 상태 필터 + 거래처 검색 */}
       <div className="mb-3 space-y-2">
         <div className="flex gap-2">
           {(['all', 'pending', 'done'] as StatusFilter[]).map((f) => (
@@ -450,7 +531,6 @@ export default function SettlementTab({ companies }: Props) {
             </button>
           ))}
         </div>
-        {/* 거래처 검색 */}
         <input
           value={companySearch}
           onChange={(e) => setCompanySearch(e.target.value)}
@@ -477,7 +557,6 @@ export default function SettlementTab({ companies }: Props) {
 
             return (
               <div key={companyName} className="rounded-3xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
-                {/* 그룹 헤더 (토글) */}
                 <button
                   onClick={() => toggleGroup(companyName)}
                   className="w-full flex items-center justify-between px-4 py-4 text-left"
@@ -493,11 +572,14 @@ export default function SettlementTab({ companies }: Props) {
                   </div>
                 </button>
 
-                {/* 그룹 내용 */}
                 {isExpanded && (
                   <div className="border-t border-neutral-100 px-3 pb-3 space-y-3 pt-3">
                     {groupInvoices.map((inv) => {
                       const totals = calcItemTotals(inv.items);
+                      const paid = calcPaid(inv.payments);
+                      const remaining = Math.max(0, totals.total - paid);
+                      const sortedPayments = [...inv.payments].sort((a, b) => a.date.localeCompare(b.date));
+
                       return (
                         <div key={inv.id} className={cn('rounded-2xl border p-3', inv.payment_done ? 'border-neutral-100 opacity-60' : 'border-neutral-200')}>
                           <div className="flex items-start justify-between gap-2 mb-2">
@@ -541,6 +623,37 @@ export default function SettlementTab({ companies }: Props) {
                             </div>
                           )}
 
+                          {/* 입금/지급 내역 */}
+                          {sortedPayments.length > 0 && (
+                            <div className="mb-2 rounded-xl border border-neutral-100 bg-neutral-50 px-3 py-2 space-y-1">
+                              <p className="text-[11px] font-semibold text-neutral-500 mb-1">
+                                {inv.direction === 'receivable' ? '입금 내역' : '지급 내역'}
+                              </p>
+                              {sortedPayments.map((p) => (
+                                <div key={p.id} className="flex items-center justify-between text-xs">
+                                  <span className="text-neutral-500">{p.date}{p.memo ? ` · ${p.memo}` : ''}</span>
+                                  <span className="font-semibold text-neutral-700">{formatCurrency(p.amount)}원</span>
+                                </div>
+                              ))}
+                              <div className="flex justify-between text-xs font-bold pt-1 border-t border-neutral-200">
+                                <span className={remaining > 0 ? 'text-orange-600' : 'text-emerald-600'}>
+                                  {remaining > 0 ? '잔액' : '완납'}
+                                </span>
+                                <span className={remaining > 0 ? 'text-orange-600' : 'text-emerald-600'}>
+                                  {remaining > 0 ? `${formatCurrency(remaining)}원` : '완료'}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* + 입금내역 추가 버튼 */}
+                          <button
+                            onClick={() => setPaymentModal({ open: true, invoiceId: inv.id, date: todayString(), amount: '', memo: '', saving: false, error: '' })}
+                            className="mb-2 w-full rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:bg-neutral-100"
+                          >
+                            + {inv.direction === 'receivable' ? '입금내역' : '지급내역'} 추가
+                          </button>
+
                           {/* 계산서 발행 (공장 선택) */}
                           <div className="mb-2 grid grid-cols-3 gap-1">
                             {([null, '1공장', '2공장'] as const).map((val) => (
@@ -577,6 +690,61 @@ export default function SettlementTab({ companies }: Props) {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* 입금내역 추가 모달 */}
+      {paymentModal.open && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setPaymentModal(EMPTY_PAYMENT_MODAL)}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-10" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-base font-bold">입금/지급 내역 추가</p>
+              <button onClick={() => setPaymentModal(EMPTY_PAYMENT_MODAL)} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <p className="mb-1 text-xs text-neutral-500">날짜</p>
+                <input
+                  type="date"
+                  value={paymentModal.date}
+                  onChange={(e) => setPaymentModal((prev) => ({ ...prev, date: e.target.value }))}
+                  className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                />
+              </div>
+              <div>
+                <p className="mb-1 text-xs text-neutral-500">금액 *</p>
+                <input
+                  type="number"
+                  value={paymentModal.amount}
+                  onChange={(e) => setPaymentModal((prev) => ({ ...prev, amount: e.target.value }))}
+                  placeholder="금액 입력"
+                  inputMode="decimal"
+                  className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <p className="mb-1 text-xs text-neutral-500">메모 (선택)</p>
+                <input
+                  type="text"
+                  value={paymentModal.memo}
+                  onChange={(e) => setPaymentModal((prev) => ({ ...prev, memo: e.target.value }))}
+                  placeholder="메모"
+                  className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                />
+              </div>
+              {paymentModal.error && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{paymentModal.error}</div>
+              )}
+              <button
+                onClick={() => void handleAddPayment()}
+                disabled={paymentModal.saving}
+                className="w-full rounded-2xl bg-neutral-900 px-4 py-4 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {paymentModal.saving ? '저장중' : '추가'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

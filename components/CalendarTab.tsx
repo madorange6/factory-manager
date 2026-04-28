@@ -29,12 +29,30 @@ const EMPTY_MODAL: SettlementModal = {
   error: '',
 };
 
+// 생산 로그 여부 판단
+function isProductionLog(log: InventoryLogRow): boolean {
+  if (!log.note) return false;
+  return log.note.includes('production_result:') || log.note.includes('production_use:');
+}
+
+// 로그의 날짜 키 반환 (date 우선, 없으면 created_at)
+function logDateKey(log: InventoryLogRow): string {
+  if (log.date) return log.date.slice(0, 10);
+  const d = new Date(log.created_at);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export default function CalendarTab({ logs, inventory, companies }: Props) {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [modal, setModal] = useState<SettlementModal>(EMPTY_MODAL);
+
+  // 메모 인라인 편집
+  const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
+  const [editingNoteValue, setEditingNoteValue] = useState('');
+  const [savingNoteId, setSavingNoteId] = useState<number | null>(null);
 
   const inventoryMap = new Map(inventory.map((item) => [item.id, item]));
 
@@ -43,12 +61,13 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
   const startDow = firstDay.getDay();
   const daysInMonth = lastDay.getDate();
 
-  // 이 달에 입출고가 있는 날짜 Set
+  // 이 달에 입출고가 있는 날짜 Set (log.date 우선)
   const activeDates = new Set<string>();
   logs.forEach((log) => {
-    const d = new Date(log.created_at);
-    if (d.getFullYear() === year && d.getMonth() === month) {
-      activeDates.add(`${year}-${String(month + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    const key = logDateKey(log);
+    const [y, m] = key.split('-').map(Number);
+    if (y === year && m === month + 1) {
+      activeDates.add(key);
     }
   });
 
@@ -68,13 +87,10 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
     setSelectedDate(null);
   }
 
+  // 선택 날짜 필터 (log.date 우선)
   const selectedLogs = selectedDate
     ? logs
-        .filter((log) => {
-          const d = new Date(log.created_at);
-          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-          return key === selectedDate;
-        })
+        .filter((log) => logDateKey(log) === selectedDate)
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     : [];
 
@@ -112,7 +128,6 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
     const qty = Number(log.qty);
     const supplyAmount = qty * unitPrice;
     const taxAmount = Math.round(supplyAmount * 0.1);
-    // 입고 → 매입(payable), 출고 → 매출(receivable)
     const direction = log.action === 'in' ? 'payable' : 'receivable';
     const companyName = log.company_name || '';
     const companyId = companies.find((c) => c.name === companyName)?.id ?? null;
@@ -153,7 +168,26 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
     }
   }
 
-  // 정산 모달 미리보기 계산
+  // 메모 저장
+  async function handleNoteSave(logId: number) {
+    setSavingNoteId(logId);
+    try {
+      const { error } = await supabase
+        .from('inventory_logs')
+        .update({ note: editingNoteValue || null })
+        .eq('id', logId);
+      if (error) throw error;
+      // 로컬 갱신 (부모에서 다시 fetch 안 하므로 직접 mutate)
+      const log = logs.find((l) => l.id === logId);
+      if (log) log.note = editingNoteValue || null;
+      setEditingNoteId(null);
+    } catch (error) {
+      alert(getErrorMessage(error));
+    } finally {
+      setSavingNoteId(null);
+    }
+  }
+
   const modalQty = modal.log ? Number(modal.log.qty) : 0;
   const modalUnitPrice = Number(modal.unitPrice) || 0;
   const modalSupply = modalQty * modalUnitPrice;
@@ -227,10 +261,13 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
           ) : (
             <div className="space-y-3">
               {selectedLogs.map((log) => {
+                const isProd = isProductionLog(log);
                 const isIn = log.action === 'in';
                 const item = inventoryMap.get(log.item_id);
                 const qty = Number(log.qty);
                 const unit = item?.unit ?? '';
+                const isEditingNote = editingNoteId === log.id;
+
                 return (
                   <div key={log.id} className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm">
                     {/* 상단: 회사명 + 배지 + 정산버튼 */}
@@ -239,15 +276,23 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
                         {log.company_name || '거래처 없음'}
                       </p>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', isIn ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600')}>
-                          {isIn ? '입고' : '출고'}
-                        </span>
-                        <button
-                          onClick={() => openSettlementModal(log)}
-                          className="rounded-full border border-neutral-300 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
-                        >
-                          정산
-                        </button>
+                        {isProd ? (
+                          <span className="rounded-full px-2.5 py-1 text-xs font-semibold bg-orange-50 text-orange-600">
+                            생산
+                          </span>
+                        ) : (
+                          <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', isIn ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600')}>
+                            {isIn ? '입고' : '출고'}
+                          </span>
+                        )}
+                        {!isProd && (
+                          <button
+                            onClick={() => openSettlementModal(log)}
+                            className="rounded-full border border-neutral-300 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+                          >
+                            정산
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -262,7 +307,54 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
                     {(log.user_name || log.user_email) && (
                       <p className="mt-0.5 text-xs text-neutral-400">작성: {log.user_name || log.user_email}</p>
                     )}
-                    {log.note && <p className="mt-0.5 text-xs text-blue-600">{log.note}</p>}
+
+                    {/* 메모 인라인 편집 */}
+                    {isEditingNote ? (
+                      <div className="mt-2 flex gap-1.5">
+                        <input
+                          type="text"
+                          value={editingNoteValue}
+                          onChange={(e) => setEditingNoteValue(e.target.value)}
+                          placeholder="메모 입력"
+                          className="flex-1 rounded-xl border border-neutral-300 px-3 py-1.5 text-xs outline-none focus:border-neutral-500"
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') void handleNoteSave(log.id);
+                            if (e.key === 'Escape') setEditingNoteId(null);
+                          }}
+                        />
+                        <button
+                          onClick={() => void handleNoteSave(log.id)}
+                          disabled={savingNoteId === log.id}
+                          className="rounded-xl bg-neutral-900 px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                        >
+                          {savingNoteId === log.id ? '저장중' : '저장'}
+                        </button>
+                        <button
+                          onClick={() => setEditingNoteId(null)}
+                          className="rounded-xl border border-neutral-200 px-2.5 py-1 text-xs text-neutral-500"
+                        >
+                          취소
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-1.5 flex items-center gap-1.5">
+                        {log.note ? (
+                          <p className="flex-1 text-xs text-blue-600">{log.note}</p>
+                        ) : (
+                          <p className="flex-1 text-xs text-neutral-300">메모 없음</p>
+                        )}
+                        <button
+                          onClick={() => {
+                            setEditingNoteId(log.id);
+                            setEditingNoteValue(log.note ?? '');
+                          }}
+                          className="shrink-0 text-xs text-neutral-400 underline underline-offset-2 hover:text-neutral-600"
+                        >
+                          수정
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -281,7 +373,6 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
             </div>
 
             <div className="space-y-3">
-              {/* 자동 채워진 정보 */}
               <div className="rounded-2xl border border-neutral-100 bg-neutral-50 px-4 py-3 space-y-1 text-sm">
                 <div className="flex justify-between">
                   <span className="text-neutral-500">거래처</span>
@@ -307,7 +398,6 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
                 </div>
               </div>
 
-              {/* 단가 입력 */}
               <div>
                 <p className="mb-1 text-xs text-neutral-500">단가 *</p>
                 <input
@@ -321,7 +411,6 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
                 />
               </div>
 
-              {/* 합계 미리보기 */}
               {modalUnitPrice > 0 && (
                 <div className="rounded-2xl border border-neutral-100 bg-neutral-50 px-4 py-3 space-y-1 text-sm">
                   <div className="flex justify-between text-neutral-600">

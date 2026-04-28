@@ -84,7 +84,7 @@ export default function Page() {
   async function fetchLogs() {
     const { data, error } = await supabase
       .from('inventory_logs')
-      .select('id, item_id, action, qty, created_at, note, user_id, user_email, user_name, company_id, company_name')
+      .select('id, item_id, action, qty, created_at, date, note, user_id, user_email, user_name, company_id, company_name')
       .order('created_at', { ascending: false });
     if (error) throw error;
     setLogs((data ?? []) as InventoryLogRow[]);
@@ -229,6 +229,7 @@ export default function Page() {
                 currentUserName={currentUserName}
                 onClose={closeQuickPanel}
                 onDone={fetchAll}
+                onCompanyAdded={fetchCompanies}
                 setMessages={setMessages}
               />
             </div>

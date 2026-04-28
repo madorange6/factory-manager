@@ -62,6 +62,15 @@ export type InvoiceItem = {
   tax_amount: number;
 };
 
+export type Payment = {
+  id: number;
+  invoice_id: number;
+  amount: number;
+  date: string;
+  memo?: string | null;
+  created_at: string;
+};
+
 export type Invoice = {
   id: number;
   company_id?: number | null;
@@ -98,7 +107,7 @@ export type QuickPanelState = {
   companyName: string;
   action: QuickAction | null;
   category: InventoryCategory | null;
-  // 입고/출고 다중 품목
+  memo: string;
   inoutItems: InOutItem[];
   productionType: ProductionType | null;
   sources: ProductionSource[];

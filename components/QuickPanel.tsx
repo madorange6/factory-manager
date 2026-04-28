@@ -15,6 +15,7 @@ type Props = {
   currentUserName: string | null;
   onClose: () => void;
   onDone: () => Promise<void>;
+  onCompanyAdded: () => Promise<void>;
   setMessages: React.Dispatch<React.SetStateAction<MessageRow[]>>;
 };
 
@@ -30,6 +31,7 @@ export const EMPTY_PANEL: QuickPanelState = {
   companyName: '',
   action: null,
   category: null,
+  memo: '',
   inoutItems: [{ ...EMPTY_INOUT_ITEM }],
   productionType: null,
   sources: [{ itemId: null, customName: '', bagQty: '' }],
@@ -49,11 +51,15 @@ export default function QuickPanel({
   currentUserName,
   onClose,
   onDone,
+  onCompanyAdded,
   setMessages,
 }: Props) {
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
   const [itemModalIndex, setItemModalIndex] = useState<number | null>(null);
+  // 거래처 등록 확인 프롬프트
+  const [pendingCompanyName, setPendingCompanyName] = useState<string | null>(null);
+  const [addingCompany, setAddingCompany] = useState(false);
 
   const sortedCompanies = useMemo(() => {
     return [...companies].sort((a, b) => {
@@ -88,11 +94,17 @@ export default function QuickPanel({
     return [];
   }, [quickPanel.productionType, inventory]);
 
-  // 현재 카테고리에 해당하는 품목 목록
+  // 거래처명 prefix로 품목 필터링 (item 4)
   const categoryItems = useMemo(() => {
     if (!quickPanel.category) return [];
-    return inventory.filter((item) => normalizeCategory(item.category) === quickPanel.category);
-  }, [quickPanel.category, inventory]);
+    const byCategory = inventory.filter((item) => normalizeCategory(item.category) === quickPanel.category);
+    const prefix = quickPanel.companyName.trim();
+    if (prefix) {
+      const filtered = byCategory.filter((item) => item.name.startsWith(prefix + ' '));
+      return filtered.length > 0 ? filtered : byCategory;
+    }
+    return byCategory;
+  }, [quickPanel.category, quickPanel.companyName, inventory]);
 
   const existingProductionTargetItem = useMemo(() => {
     const typed = quickPanel.targetItemName.trim().toLowerCase();
@@ -141,7 +153,7 @@ export default function QuickPanel({
       action,
       qty,
       note,
-      date: quickPanel.date,  // 선택한 날짜 저장 (버그 수정)
+      date: quickPanel.date,
       user_id: currentUserId,
       user_email: currentUserEmail,
       user_name: currentUserName,
@@ -174,6 +186,14 @@ export default function QuickPanel({
     }) ?? null;
   }
 
+  // 거래처명 자동 prefix 적용 (item 4)
+  function applyCompanyPrefix(rawName: string): string {
+    const company = quickPanel.companyName.trim();
+    if (!company) return rawName;
+    if (rawName.startsWith(company + ' ')) return rawName;
+    return `${company} ${rawName}`;
+  }
+
   function updateInoutItem(index: number, field: keyof InOutItem, value: string | number | null) {
     setQuickPanel((prev) => {
       const next = [...prev.inoutItems];
@@ -181,6 +201,28 @@ export default function QuickPanel({
       return { ...prev, inoutItems: next };
     });
     setError('');
+  }
+
+  async function handleAddCompany(name: string) {
+    try {
+      setAddingCompany(true);
+      const { error } = await supabase.from('companies').insert({ name, is_favorite: false });
+      if (error) throw error;
+      await onCompanyAdded();
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setAddingCompany(false);
+      setPendingCompanyName(null);
+      onClose();
+      await onDone();
+    }
+  }
+
+  async function handleSkipCompanyAdd() {
+    setPendingCompanyName(null);
+    onClose();
+    await onDone();
   }
 
   async function execute() {
@@ -192,6 +234,9 @@ export default function QuickPanel({
       setError('거래처명을 입력해줘.');
       return;
     }
+
+    const userMemo = quickPanel.memo.trim();
+    const isNewCompany = !quickPanel.companyId && quickPanel.companyName.trim() !== '' && action !== '생산';
 
     // ── 생산 ──
     if (action === '생산') {
@@ -228,10 +273,10 @@ export default function QuickPanel({
         return `${srcItem?.name || src.customName} ${src.bagQty}bag`;
       }).join(', ');
 
-      // 기간 note
       const dateNote = quickPanel.productionEndDate && quickPanel.productionEndDate !== quickPanel.date
         ? `기간: ${quickPanel.date} ~ ${quickPanel.productionEndDate}`
         : `날짜: ${quickPanel.date}`;
+      const memoNote = userMemo ? ` / 메모: ${userMemo}` : '';
 
       if (productionType === '원료생산') {
         const targetKgQty = Number(quickPanel.targetKgQty);
@@ -241,11 +286,11 @@ export default function QuickPanel({
           if (src.itemId === null) continue;
           const srcItem = inventory.find((item) => item.id === src.itemId)!;
           await updateStock(srcItem.id, Number(srcItem.current_stock) - Number(src.bagQty));
-          await insertLog(srcItem.id, 'out', Number(src.bagQty), `production_use:원료생산:${targetItem.name} / ${dateNote}`);
+          await insertLog(srcItem.id, 'out', Number(src.bagQty), `production_use:원료생산:${targetItem.name} / ${dateNote}${memoNote}`);
         }
         await updateStock(targetItem.id, Number(targetItem.current_stock ?? 0) + targetKgQty);
-        await insertLog(targetItem.id, 'in', targetKgQty, `production_result:원료생산:${sourceNames || '없음'} / ${dateNote}`);
-        await saveMsg(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetKgQty}kg 생산 완료. (${dateNote})`, 'system');
+        await insertLog(targetItem.id, 'in', targetKgQty, `production_result:원료생산:${sourceNames || '없음'} / ${dateNote}${memoNote}`);
+        await saveMsg(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetKgQty}kg 생산 완료.`, 'system');
         onClose();
         await onDone();
         return;
@@ -259,18 +304,18 @@ export default function QuickPanel({
           if (src.itemId === null) continue;
           const srcItem = inventory.find((item) => item.id === src.itemId)!;
           await updateStock(srcItem.id, Number(srcItem.current_stock) - Number(src.bagQty));
-          await insertLog(srcItem.id, 'out', Number(src.bagQty), `production_use:분쇄품생산:${targetItem.name} / ${dateNote}`);
+          await insertLog(srcItem.id, 'out', Number(src.bagQty), `production_use:분쇄품생산:${targetItem.name} / ${dateNote}${memoNote}`);
         }
         await updateStock(targetItem.id, Number(targetItem.current_stock ?? 0) + targetBagQty);
-        await insertLog(targetItem.id, 'in', targetBagQty, `production_result:분쇄품생산:${sourceNames || '없음'} / ${dateNote}`);
-        await saveMsg(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetBagQty}bag 생산 완료. (${dateNote})`, 'system');
+        await insertLog(targetItem.id, 'in', targetBagQty, `production_result:분쇄품생산:${sourceNames || '없음'} / ${dateNote}${memoNote}`);
+        await saveMsg(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetBagQty}bag 생산 완료.`, 'system');
         onClose();
         await onDone();
         return;
       }
     }
 
-    // ── 재고 확인 ──
+    // ── 재고 ──
     if (action === '재고') {
       const firstItem = quickPanel.inoutItems[0];
       const found = (firstItem?.itemId ? inventory.find((i) => i.id === firstItem.itemId) : null)
@@ -297,9 +342,11 @@ export default function QuickPanel({
       const results: string[] = [];
 
       for (const inoutItem of validItems) {
-        const typedName = inoutItem.itemName.trim();
+        const rawName = inoutItem.itemName.trim();
+        // 거래처명 자동 prefix 적용
+        const typedName = rawName ? applyCompanyPrefix(rawName) : '';
         let found = (inoutItem.itemId ? inventory.find((i) => i.id === inoutItem.itemId) : null)
-          || getMatchedItem(typedName, quickPanel.category);
+          || (typedName ? getMatchedItem(typedName, quickPanel.category) : null);
 
         if (quickPanel.category === '원료') {
           const kg = Number(inoutItem.kgQty);
@@ -315,7 +362,7 @@ export default function QuickPanel({
           }
           const newStock = action === '입고' ? currentStock + kg : currentStock - kg;
           await updateStock(found.id, newStock);
-          await insertLog(found.id, action === '입고' ? 'in' : 'out', kg);
+          await insertLog(found.id, action === '입고' ? 'in' : 'out', kg, userMemo || null);
           results.push(`${found.name} ${kg}kg`);
         } else {
           const bagQty = Number(inoutItem.bagQty);
@@ -332,7 +379,7 @@ export default function QuickPanel({
           }
           const newStock = action === '입고' ? currentStock + bagQty : currentStock - bagQty;
           await updateStock(found.id, newStock);
-          await insertLog(found.id, action === '입고' ? 'in' : 'out', bagQty);
+          await insertLog(found.id, action === '입고' ? 'in' : 'out', bagQty, userMemo || null);
           const kgText = kgQty !== null && kgQty > 0 ? `/${kgQty}kg` : '';
           results.push(`${found.name} ${bagQty}bag${kgText}`);
         }
@@ -343,8 +390,15 @@ export default function QuickPanel({
       const summary = results.join(', ');
       await saveMsg(`${action} ${quickPanel.category} ${summary}`, 'chat');
       await saveMsg(`${summary} ${action} 완료.`, 'system');
-      onClose();
-      await onDone();
+
+      // 새 거래처 등록 프롬프트
+      if (isNewCompany) {
+        setPendingCompanyName(quickPanel.companyName.trim());
+        await onDone();
+      } else {
+        onClose();
+        await onDone();
+      }
     }
   }
 
@@ -380,8 +434,32 @@ export default function QuickPanel({
     return parts.join(' / ');
   }, [quickPanel, inventory]);
 
-  // 현재 카테고리 아이템 모달 (특정 row용)
-  const modalItems = categoryItems;
+  // ── 거래처 등록 확인 프롬프트 ──
+  if (pendingCompanyName) {
+    return (
+      <div className="mb-2 rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
+        <p className="text-sm font-semibold mb-1">거래처 등록</p>
+        <p className="text-sm text-neutral-600 mb-4">
+          <b>{pendingCompanyName}</b>을(를) 거래처 목록에 추가할까요?
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => void handleAddCompany(pendingCompanyName)}
+            disabled={addingCompany}
+            className="rounded-2xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {addingCompany ? '추가중' : '추가'}
+          </button>
+          <button
+            onClick={() => void handleSkipCompanyAdd()}
+            className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-medium text-neutral-700"
+          >
+            이번만 사용
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mb-2 rounded-3xl border border-neutral-200 bg-white p-3 shadow-sm">
@@ -402,7 +480,7 @@ export default function QuickPanel({
           />
         </div>
 
-        {/* 2. 거래처 (생산 제외하고 필수) */}
+        {/* 2. 거래처 */}
         <div>
           <p className="mb-1 text-xs text-neutral-500">
             거래처{quickPanel.action && quickPanel.action !== '생산' ? ' *' : ' (선택)'}
@@ -451,6 +529,7 @@ export default function QuickPanel({
                     ...prev,
                     action,
                     category: null,
+                    memo: '',
                     inoutItems: [{ ...EMPTY_INOUT_ITEM }],
                     productionType: null,
                     sources: [{ itemId: null, customName: '', bagQty: '' }],
@@ -472,9 +551,8 @@ export default function QuickPanel({
         {/* ── 생산 ── */}
         {quickPanel.action === '생산' && (
           <div className="space-y-3">
-            {/* 종료일 (기간 선택) */}
             <div>
-              <p className="mb-1 text-xs text-neutral-500">종료일 (단일 날짜면 위 날짜와 동일하게)</p>
+              <p className="mb-1 text-xs text-neutral-500">종료일 (단일이면 시작일과 동일)</p>
               <input
                 type="date"
                 value={quickPanel.productionEndDate}
@@ -483,7 +561,6 @@ export default function QuickPanel({
                 className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
               />
             </div>
-
             <div>
               <p className="mb-1 text-xs text-neutral-500">생산 종류</p>
               <div className="grid grid-cols-2 gap-2">
@@ -549,9 +626,7 @@ export default function QuickPanel({
                           <button
                             onClick={() => setQuickPanel((prev) => ({ ...prev, sources: prev.sources.filter((_, i) => i !== index) }))}
                             className="rounded-2xl border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-600"
-                          >
-                            ✕
-                          </button>
+                          >✕</button>
                         )}
                       </div>
                       {!src.itemId && (
@@ -605,25 +680,13 @@ export default function QuickPanel({
                 {quickPanel.productionType === '원료생산' && (
                   <div>
                     <p className="mb-1 text-xs text-neutral-500">생산량 kg</p>
-                    <input
-                      value={quickPanel.targetKgQty}
-                      onChange={(e) => { setQuickPanel((prev) => ({ ...prev, targetKgQty: e.target.value })); setError(''); }}
-                      placeholder="생산된 원료 kg"
-                      inputMode="decimal"
-                      className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
-                    />
+                    <input value={quickPanel.targetKgQty} onChange={(e) => { setQuickPanel((prev) => ({ ...prev, targetKgQty: e.target.value })); setError(''); }} placeholder="생산된 원료 kg" inputMode="decimal" className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400" />
                   </div>
                 )}
                 {quickPanel.productionType === '분쇄품생산' && (
                   <div>
                     <p className="mb-1 text-xs text-neutral-500">생산량 bag</p>
-                    <input
-                      value={quickPanel.targetBagQty}
-                      onChange={(e) => { setQuickPanel((prev) => ({ ...prev, targetBagQty: e.target.value })); setError(''); }}
-                      placeholder="생산된 분쇄품 bag"
-                      inputMode="numeric"
-                      className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
-                    />
+                    <input value={quickPanel.targetBagQty} onChange={(e) => { setQuickPanel((prev) => ({ ...prev, targetBagQty: e.target.value })); setError(''); }} placeholder="생산된 분쇄품 bag" inputMode="numeric" className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400" />
                   </div>
                 )}
               </>
@@ -665,11 +728,7 @@ export default function QuickPanel({
                   <button
                     key={category}
                     onClick={() => {
-                      setQuickPanel((prev) => ({
-                        ...prev,
-                        category,
-                        inoutItems: [{ ...EMPTY_INOUT_ITEM }],
-                      }));
+                      setQuickPanel((prev) => ({ ...prev, category, inoutItems: [{ ...EMPTY_INOUT_ITEM }] }));
                       setError('');
                     }}
                     className={cn('rounded-2xl border px-3 py-3 text-sm font-medium', quickPanel.category === category ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50 text-neutral-700')}
@@ -682,79 +741,46 @@ export default function QuickPanel({
 
             {quickPanel.category && (
               <div>
-                <p className="mb-2 text-xs text-neutral-500">품목 목록</p>
+                <p className="mb-2 text-xs text-neutral-500">
+                  품목 목록
+                  {quickPanel.companyName.trim() && <span className="ml-1 text-blue-500">({quickPanel.companyName.trim()} 품목 우선)</span>}
+                </p>
                 {quickPanel.inoutItems.map((inoutItem, index) => (
                   <div key={index} className="mb-3 rounded-2xl border border-neutral-100 bg-neutral-50 p-3 space-y-2">
                     <div className="flex items-center justify-between">
                       <p className="text-xs font-semibold text-neutral-500">품목 {index + 1}</p>
                       {quickPanel.inoutItems.length > 1 && (
-                        <button
-                          onClick={() => setQuickPanel((prev) => ({ ...prev, inoutItems: prev.inoutItems.filter((_, i) => i !== index) }))}
-                          className="text-red-500 text-xs font-semibold"
-                        >
-                          ✕ 삭제
-                        </button>
+                        <button onClick={() => setQuickPanel((prev) => ({ ...prev, inoutItems: prev.inoutItems.filter((_, i) => i !== index) }))} className="text-red-500 text-xs font-semibold">✕ 삭제</button>
                       )}
                     </div>
-
-                    {/* 품목 선택 버튼 */}
-                    <button
-                      onClick={() => setItemModalIndex(index)}
-                      className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-left text-sm text-neutral-700"
-                    >
+                    <button onClick={() => setItemModalIndex(index)} className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-left text-sm text-neutral-700">
                       {inoutItem.itemId ? (inventory.find((i) => i.id === inoutItem.itemId)?.name ?? '품목 선택') : '품목 선택 ▼'}
                     </button>
-
-                    {/* 직접 입력 */}
                     <input
                       value={inoutItem.itemName}
-                      onChange={(e) => {
-                        updateInoutItem(index, 'itemName', e.target.value);
-                        updateInoutItem(index, 'itemId', null);
-                      }}
-                      placeholder="또는 품목명 직접 입력"
+                      onChange={(e) => { updateInoutItem(index, 'itemName', e.target.value); updateInoutItem(index, 'itemId', null); }}
+                      placeholder={quickPanel.companyName.trim() ? `품목명 입력 (저장 시 "${quickPanel.companyName.trim()} " 자동 추가)` : '또는 품목명 직접 입력'}
                       className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
                     />
-
-                    {/* 수량 */}
                     {quickPanel.category === '원료' ? (
                       <div>
                         <p className="mb-1 text-[11px] text-neutral-400">kg</p>
-                        <input
-                          value={inoutItem.kgQty}
-                          onChange={(e) => updateInoutItem(index, 'kgQty', e.target.value)}
-                          placeholder="kg 수량"
-                          inputMode="decimal"
-                          className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400"
-                        />
+                        <input value={inoutItem.kgQty} onChange={(e) => updateInoutItem(index, 'kgQty', e.target.value)} placeholder="kg 수량" inputMode="decimal" className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400" />
                       </div>
                     ) : (
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <p className="mb-1 text-[11px] text-neutral-400">bag</p>
-                          <input
-                            value={inoutItem.bagQty}
-                            onChange={(e) => updateInoutItem(index, 'bagQty', e.target.value)}
-                            placeholder="bag 수"
-                            inputMode="numeric"
-                            className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400"
-                          />
+                          <input value={inoutItem.bagQty} onChange={(e) => updateInoutItem(index, 'bagQty', e.target.value)} placeholder="bag 수" inputMode="numeric" className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400" />
                         </div>
                         <div>
                           <p className="mb-1 text-[11px] text-neutral-400">kg (선택)</p>
-                          <input
-                            value={inoutItem.kgQty}
-                            onChange={(e) => updateInoutItem(index, 'kgQty', e.target.value)}
-                            placeholder="없으면 비워둬"
-                            inputMode="decimal"
-                            className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400"
-                          />
+                          <input value={inoutItem.kgQty} onChange={(e) => updateInoutItem(index, 'kgQty', e.target.value)} placeholder="없으면 비워둬" inputMode="decimal" className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400" />
                         </div>
                       </div>
                     )}
                   </div>
                 ))}
-
                 <button
                   onClick={() => setQuickPanel((prev) => ({ ...prev, inoutItems: [...prev.inoutItems, { ...EMPTY_INOUT_ITEM }] }))}
                   className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-600"
@@ -764,6 +790,19 @@ export default function QuickPanel({
               </div>
             )}
           </>
+        )}
+
+        {/* 메모 (입고/출고/생산) */}
+        {quickPanel.action && quickPanel.action !== '재고' && (
+          <div>
+            <p className="mb-1 text-xs text-neutral-500">메모 (선택)</p>
+            <input
+              value={quickPanel.memo}
+              onChange={(e) => setField('memo', e.target.value)}
+              placeholder="메모 입력"
+              className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+            />
+          </div>
         )}
 
         {/* 선택값 요약 */}
@@ -792,10 +831,10 @@ export default function QuickPanel({
               <button onClick={() => setItemModalIndex(null)} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
             </div>
             <div className="max-h-80 overflow-y-auto space-y-2">
-              {modalItems.length === 0 ? (
+              {categoryItems.length === 0 ? (
                 <p className="text-sm text-neutral-500 text-center py-4">해당 카테고리에 품목이 없어.</p>
               ) : (
-                modalItems.map((item) => (
+                categoryItems.map((item) => (
                   <button
                     key={item.id}
                     onClick={() => {
