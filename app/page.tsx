@@ -13,6 +13,7 @@ import SettlementTab from '../components/SettlementTab';
 import QuickPanel, { EMPTY_PANEL } from '../components/QuickPanel';
 
 const ADMIN_EMAIL = 'sj_advisory@naver.com';
+const ALLOWED_FINANCE_EMAILS = ['sj_advisory@naver.com', 'kim525253@naver.com'];
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -133,12 +134,13 @@ export default function Page() {
   }
 
   const isAdmin = currentUserEmail === ADMIN_EMAIL;
+  const canViewFinance = currentUserEmail !== null && ALLOWED_FINANCE_EMAILS.includes(currentUserEmail);
 
   const TAB_ITEMS: { key: TabKey; icon: string; label: string }[] = [
     { key: 'chat', icon: '💬', label: '채팅' },
     { key: 'calendar', icon: '📦', label: '입출고' },
     { key: 'stock', icon: '📊', label: '재고' },
-    ...(isAdmin ? [{ key: 'settlement' as TabKey, icon: '🧾', label: '정산' }] : []),
+    ...(canViewFinance ? [{ key: 'settlement' as TabKey, icon: '🧾', label: '정산' }] : []),
   ];
 
   const TAB_TITLE: Record<TabKey, string> = {
@@ -208,7 +210,7 @@ export default function Page() {
                   onRefreshProfiles={fetchProfiles}
                 />
               )}
-              {activeTab === 'settlement' && isAdmin && (
+              {activeTab === 'settlement' && canViewFinance && (
                 <SettlementTab companies={companies} />
               )}
             </>
