@@ -7,7 +7,6 @@ import { Company, InventoryItem, InventoryLogRow, MessageRow, QuickPanelState, T
 import { fallbackName, getErrorMessage, todayString } from '../lib/utils';
 
 import ChatTab from '../components/ChatTab';
-import InOutTab from '../components/InOutTab';
 import CalendarTab from '../components/CalendarTab';
 import StockTab from '../components/StockTab';
 import SettlementTab from '../components/SettlementTab';
@@ -137,16 +136,14 @@ export default function Page() {
 
   const TAB_ITEMS: { key: TabKey; icon: string; label: string }[] = [
     { key: 'chat', icon: '💬', label: '채팅' },
-    { key: 'inout', icon: '📦', label: '입출고' },
-    { key: 'calendar', icon: '📅', label: '달력' },
+    { key: 'calendar', icon: '📦', label: '입출고' },
     { key: 'stock', icon: '📊', label: '재고' },
     ...(isAdmin ? [{ key: 'settlement' as TabKey, icon: '🧾', label: '정산' }] : []),
   ];
 
   const TAB_TITLE: Record<TabKey, string> = {
     chat: '채팅',
-    inout: '입출고',
-    calendar: '달력',
+    calendar: '입출고',
     stock: '재고',
     settlement: '정산',
   };
@@ -193,21 +190,11 @@ export default function Page() {
                   onOpenQuickPanel={openQuickPanel}
                 />
               )}
-              {activeTab === 'inout' && (
-                <InOutTab
-                  companies={companies}
-                  setCompanies={setCompanies}
-                  logs={logs}
-                  inventory={inventory}
-                  currentUserEmail={currentUserEmail}
-                  onRefreshLogs={fetchLogs}
-                  onRefreshCompanies={fetchCompanies}
-                />
-              )}
               {activeTab === 'calendar' && (
                 <CalendarTab
                   logs={logs}
                   inventory={inventory}
+                  companies={companies}
                 />
               )}
               {activeTab === 'stock' && (
@@ -250,7 +237,7 @@ export default function Page() {
 
         {/* 하단 탭 네비게이션 */}
         <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-md -translate-x-1/2 border-t border-neutral-200 bg-white/95 pb-[calc(env(safe-area-inset-bottom)+8px)] pt-2 backdrop-blur">
-          <div className={cn('grid gap-1 px-2', TAB_ITEMS.length === 5 ? 'grid-cols-5' : 'grid-cols-4')}>
+          <div className={cn('grid gap-1 px-2', TAB_ITEMS.length === 4 ? 'grid-cols-4' : 'grid-cols-3')}>
             {TAB_ITEMS.map(({ key, icon, label }) => (
               <button
                 key={key}

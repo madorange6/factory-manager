@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase/client';
-import { Company, InventoryCategory, InventoryItem, InventoryLogRow, MessageRow, QuickPanelState } from '../lib/types';
+import { Company, InventoryCategory, InventoryItem, InOutItem, MessageRow, QuickPanelState } from '../lib/types';
 import { cn, getErrorMessage, normalizeCategory, todayString } from '../lib/utils';
 
 type Props = {
@@ -20,17 +20,17 @@ type Props = {
 
 const CATEGORY_OPTIONS: InventoryCategory[] = ['원료', '분쇄품', '스크랩'];
 
+export const EMPTY_INOUT_ITEM: InOutItem = { itemId: null, itemName: '', bagQty: '', kgQty: '' };
+
 export const EMPTY_PANEL: QuickPanelState = {
   isOpen: false,
   date: todayString(),
+  productionEndDate: todayString(),
   companyId: null,
   companyName: '',
   action: null,
   category: null,
-  itemName: '',
-  selectedItemId: null,
-  bagQty: '',
-  kgQty: '',
+  inoutItems: [{ ...EMPTY_INOUT_ITEM }],
   productionType: null,
   sources: [{ itemId: null, customName: '', bagQty: '' }],
   targetItemId: null,
@@ -53,7 +53,7 @@ export default function QuickPanel({
 }: Props) {
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
-  const [itemModalOpen, setItemModalOpen] = useState(false);
+  const [itemModalIndex, setItemModalIndex] = useState<number | null>(null);
 
   const sortedCompanies = useMemo(() => {
     return [...companies].sort((a, b) => {
@@ -88,26 +88,11 @@ export default function QuickPanel({
     return [];
   }, [quickPanel.productionType, inventory]);
 
-  const quickPanelItems = useMemo(() => {
-    if (!quickPanel.action) return [];
-    if (quickPanel.action === '재고') return inventory;
-    if ((quickPanel.action === '입고' || quickPanel.action === '출고') && quickPanel.category) {
-      return inventory.filter((item) => normalizeCategory(item.category) === quickPanel.category);
-    }
-    return [];
-  }, [quickPanel.action, quickPanel.category, inventory]);
-
-  const willCreateNewItem = useMemo(() => {
-    if (!(quickPanel.action === '입고' || quickPanel.action === '출고')) return false;
-    if (!quickPanel.category || !quickPanel.itemName.trim()) return false;
-    if (quickPanel.selectedItemId) return false;
-    const typed = quickPanel.itemName.trim().toLowerCase();
-    return !inventory.find((item) => {
-      const nameMatch = item.name.trim().toLowerCase() === typed;
-      const categoryMatch = normalizeCategory(item.category) === quickPanel.category;
-      return nameMatch && categoryMatch;
-    });
-  }, [quickPanel, inventory]);
+  // 현재 카테고리에 해당하는 품목 목록
+  const categoryItems = useMemo(() => {
+    if (!quickPanel.category) return [];
+    return inventory.filter((item) => normalizeCategory(item.category) === quickPanel.category);
+  }, [quickPanel.category, inventory]);
 
   const existingProductionTargetItem = useMemo(() => {
     const typed = quickPanel.targetItemName.trim().toLowerCase();
@@ -152,8 +137,14 @@ export default function QuickPanel({
 
   async function insertLog(itemId: number, action: 'in' | 'out', qty: number, note: string | null = null) {
     const { error } = await supabase.from('inventory_logs').insert({
-      item_id: itemId, action, qty, note,
-      user_id: currentUserId, user_email: currentUserEmail, user_name: currentUserName,
+      item_id: itemId,
+      action,
+      qty,
+      note,
+      date: quickPanel.date,  // 선택한 날짜 저장 (버그 수정)
+      user_id: currentUserId,
+      user_email: currentUserEmail,
+      user_name: currentUserName,
       company_id: quickPanel.companyId || null,
       company_name: quickPanel.companyName.trim() || null,
     });
@@ -166,7 +157,10 @@ export default function QuickPanel({
   }
 
   async function createItem(name: string, category: InventoryCategory, unit: string, initialStock: number): Promise<InventoryItem> {
-    const { data, error } = await supabase.from('inventory_items').insert({ name, category, unit, current_stock: initialStock }).select('id, name, current_stock, unit, category').single();
+    const { data, error } = await supabase.from('inventory_items')
+      .insert({ name, category, unit, current_stock: initialStock })
+      .select('id, name, current_stock, unit, category')
+      .single();
     if (error) throw error;
     return data as InventoryItem;
   }
@@ -180,11 +174,26 @@ export default function QuickPanel({
     }) ?? null;
   }
 
+  function updateInoutItem(index: number, field: keyof InOutItem, value: string | number | null) {
+    setQuickPanel((prev) => {
+      const next = [...prev.inoutItems];
+      next[index] = { ...next[index], [field]: value };
+      return { ...prev, inoutItems: next };
+    });
+    setError('');
+  }
+
   async function execute() {
     const action = quickPanel.action;
     if (!action) { setError('작업을 먼저 선택해줘.'); return; }
 
-    // 생산
+    // 거래처명 필수 (생산 제외)
+    if (action !== '생산' && !quickPanel.companyName.trim()) {
+      setError('거래처명을 입력해줘.');
+      return;
+    }
+
+    // ── 생산 ──
     if (action === '생산') {
       const productionType = quickPanel.productionType;
       if (!productionType) { setError('생산 종류를 먼저 선택해줘.'); return; }
@@ -219,6 +228,11 @@ export default function QuickPanel({
         return `${srcItem?.name || src.customName} ${src.bagQty}bag`;
       }).join(', ');
 
+      // 기간 note
+      const dateNote = quickPanel.productionEndDate && quickPanel.productionEndDate !== quickPanel.date
+        ? `기간: ${quickPanel.date} ~ ${quickPanel.productionEndDate}`
+        : `날짜: ${quickPanel.date}`;
+
       if (productionType === '원료생산') {
         const targetKgQty = Number(quickPanel.targetKgQty);
         if (!Number.isFinite(targetKgQty) || targetKgQty <= 0) { setError('생산된 원료 kg를 입력해줘.'); return; }
@@ -227,11 +241,11 @@ export default function QuickPanel({
           if (src.itemId === null) continue;
           const srcItem = inventory.find((item) => item.id === src.itemId)!;
           await updateStock(srcItem.id, Number(srcItem.current_stock) - Number(src.bagQty));
-          await insertLog(srcItem.id, 'out', Number(src.bagQty), `production_use:원료생산:${targetItem.name}`);
+          await insertLog(srcItem.id, 'out', Number(src.bagQty), `production_use:원료생산:${targetItem.name} / ${dateNote}`);
         }
         await updateStock(targetItem.id, Number(targetItem.current_stock ?? 0) + targetKgQty);
-        await insertLog(targetItem.id, 'in', targetKgQty, `production_result:원료생산:${sourceNames || '없음'}`);
-        await saveMsg(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetKgQty}kg 생산 완료.`, 'system');
+        await insertLog(targetItem.id, 'in', targetKgQty, `production_result:원료생산:${sourceNames || '없음'} / ${dateNote}`);
+        await saveMsg(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetKgQty}kg 생산 완료. (${dateNote})`, 'system');
         onClose();
         await onDone();
         return;
@@ -245,20 +259,22 @@ export default function QuickPanel({
           if (src.itemId === null) continue;
           const srcItem = inventory.find((item) => item.id === src.itemId)!;
           await updateStock(srcItem.id, Number(srcItem.current_stock) - Number(src.bagQty));
-          await insertLog(srcItem.id, 'out', Number(src.bagQty), `production_use:분쇄품생산:${targetItem.name}`);
+          await insertLog(srcItem.id, 'out', Number(src.bagQty), `production_use:분쇄품생산:${targetItem.name} / ${dateNote}`);
         }
         await updateStock(targetItem.id, Number(targetItem.current_stock ?? 0) + targetBagQty);
-        await insertLog(targetItem.id, 'in', targetBagQty, `production_result:분쇄품생산:${sourceNames || '없음'}`);
-        await saveMsg(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetBagQty}bag 생산 완료.`, 'system');
+        await insertLog(targetItem.id, 'in', targetBagQty, `production_result:분쇄품생산:${sourceNames || '없음'} / ${dateNote}`);
+        await saveMsg(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetBagQty}bag 생산 완료. (${dateNote})`, 'system');
         onClose();
         await onDone();
         return;
       }
     }
 
-    // 재고 확인
+    // ── 재고 확인 ──
     if (action === '재고') {
-      const found = inventory.find((i) => i.id === quickPanel.selectedItemId) || getMatchedItem(quickPanel.itemName.trim(), null);
+      const firstItem = quickPanel.inoutItems[0];
+      const found = (firstItem?.itemId ? inventory.find((i) => i.id === firstItem.itemId) : null)
+        || getMatchedItem(firstItem?.itemName ?? '', null);
       if (!found) { setError('재고 확인할 품목을 입력하거나 선택해줘.'); return; }
       await saveMsg(`재고 ${found.name}`, 'chat');
       await saveMsg(`${found.name} 현재 재고는 ${found.current_stock}${found.unit} 이야.`, 'system');
@@ -266,48 +282,67 @@ export default function QuickPanel({
       return;
     }
 
-    // 입고 / 출고
+    // ── 입고 / 출고 (다중 품목) ──
     if (action === '입고' || action === '출고') {
       if (!quickPanel.category) { setError('형태를 먼저 선택해줘.'); return; }
-      const typedName = quickPanel.itemName.trim();
-      let found = inventory.find((i) => i.id === quickPanel.selectedItemId) || getMatchedItem(typedName, quickPanel.category);
-      if (!typedName && !found) { setError('품목을 입력하거나 선택해줘.'); return; }
 
-      if (quickPanel.category === '원료') {
-        const kg = Number(quickPanel.kgQty);
-        if (!Number.isFinite(kg) || kg <= 0) { setError('원료는 kg 수량을 입력해줘.'); return; }
-        if (!found) {
-          if (action === '출고') { setError('없는 품목은 출고할 수 없어.'); return; }
-          found = await createItem(typedName, '원료', 'kg', 0);
+      const validItems = quickPanel.inoutItems.filter((item) => {
+        const hasItem = item.itemId !== null || item.itemName.trim() !== '';
+        const hasQty = quickPanel.category === '원료' ? item.kgQty.trim() !== '' : item.bagQty.trim() !== '';
+        return hasItem && hasQty;
+      });
+
+      if (validItems.length === 0) { setError('품목과 수량을 입력해줘.'); return; }
+
+      const results: string[] = [];
+
+      for (const inoutItem of validItems) {
+        const typedName = inoutItem.itemName.trim();
+        let found = (inoutItem.itemId ? inventory.find((i) => i.id === inoutItem.itemId) : null)
+          || getMatchedItem(typedName, quickPanel.category);
+
+        if (quickPanel.category === '원료') {
+          const kg = Number(inoutItem.kgQty);
+          if (!Number.isFinite(kg) || kg <= 0) continue;
+          if (!found) {
+            if (action === '출고') { setError(`'${typedName}' 없는 품목은 출고할 수 없어.`); return; }
+            found = await createItem(typedName, '원료', 'kg', 0);
+          }
+          const currentStock = Number(found.current_stock ?? 0);
+          if (action === '출고' && currentStock < kg) {
+            setError(`${found.name} 재고 부족 (현재 ${currentStock}${found.unit})`);
+            return;
+          }
+          const newStock = action === '입고' ? currentStock + kg : currentStock - kg;
+          await updateStock(found.id, newStock);
+          await insertLog(found.id, action === '입고' ? 'in' : 'out', kg);
+          results.push(`${found.name} ${kg}kg`);
+        } else {
+          const bagQty = Number(inoutItem.bagQty);
+          const kgQty = inoutItem.kgQty.trim() === '' ? null : Number(inoutItem.kgQty);
+          if (!Number.isFinite(bagQty) || bagQty <= 0) continue;
+          if (!found) {
+            if (action === '출고') { setError(`'${typedName}' 없는 품목은 출고할 수 없어.`); return; }
+            found = await createItem(typedName, quickPanel.category!, 'bag', 0);
+          }
+          const currentStock = Number(found.current_stock ?? 0);
+          if (action === '출고' && currentStock < bagQty) {
+            setError(`${found.name} 재고 부족 (현재 ${currentStock}${found.unit})`);
+            return;
+          }
+          const newStock = action === '입고' ? currentStock + bagQty : currentStock - bagQty;
+          await updateStock(found.id, newStock);
+          await insertLog(found.id, action === '입고' ? 'in' : 'out', bagQty);
+          const kgText = kgQty !== null && kgQty > 0 ? `/${kgQty}kg` : '';
+          results.push(`${found.name} ${bagQty}bag${kgText}`);
         }
-        const currentStock = Number(found.current_stock ?? 0);
-        if (action === '출고' && currentStock < kg) { setError(`${found.name} 재고 부족 (현재 ${currentStock}${found.unit})`); return; }
-        const newStock = action === '입고' ? currentStock + kg : currentStock - kg;
-        await saveMsg(`${action} ${quickPanel.category} ${found.name} ${kg}kg`, 'chat');
-        await updateStock(found.id, newStock);
-        await insertLog(found.id, action === '입고' ? 'in' : 'out', kg);
-        await saveMsg(willCreateNewItem ? `${found.name} 새 품목 추가 후 ${kg}kg ${action} 완료.` : `${found.name} ${kg}kg ${action} 완료.`, 'system');
-        onClose();
-        await onDone();
-        return;
       }
 
-      const bagQty = Number(quickPanel.bagQty);
-      const kgQty = quickPanel.kgQty.trim() === '' ? null : Number(quickPanel.kgQty);
-      if (!Number.isFinite(bagQty) || bagQty <= 0) { setError('분쇄품/스크랩은 bag 수를 입력해줘.'); return; }
-      if (kgQty !== null && (!Number.isFinite(kgQty) || kgQty < 0)) { setError('kg는 비워두거나 숫자로 입력해줘.'); return; }
-      if (!found) {
-        if (action === '출고') { setError('없는 품목은 출고할 수 없어.'); return; }
-        found = await createItem(typedName, quickPanel.category, 'bag', 0);
-      }
-      const currentStock = Number(found.current_stock ?? 0);
-      if (action === '출고' && currentStock < bagQty) { setError(`${found.name} 재고 부족 (현재 ${currentStock}${found.unit})`); return; }
-      const newStock = action === '입고' ? currentStock + bagQty : currentStock - bagQty;
-      const kgText = kgQty !== null && kgQty > 0 ? ` / ${kgQty}kg` : '';
-      await saveMsg(`${action} ${quickPanel.category} ${found.name} ${bagQty}bag${kgText}`, 'chat');
-      await updateStock(found.id, newStock);
-      await insertLog(found.id, action === '입고' ? 'in' : 'out', bagQty);
-      await saveMsg(willCreateNewItem ? `${found.name} 새 품목 추가 후 ${bagQty}bag${kgText} ${action} 완료.` : `${found.name} ${bagQty}bag${kgText} ${action} 완료.`, 'system');
+      if (results.length === 0) { setError('처리된 품목이 없어. 수량을 확인해줘.'); return; }
+
+      const summary = results.join(', ');
+      await saveMsg(`${action} ${quickPanel.category} ${summary}`, 'chat');
+      await saveMsg(`${summary} ${action} 완료.`, 'system');
       onClose();
       await onDone();
     }
@@ -320,8 +355,7 @@ export default function QuickPanel({
       setError('');
       await execute();
     } catch (e) {
-      const msg = getErrorMessage(e);
-      setError(msg);
+      setError(getErrorMessage(e));
     } finally {
       setSending(false);
     }
@@ -333,14 +367,21 @@ export default function QuickPanel({
     if (quickPanel.action) parts.push(quickPanel.action);
     if (quickPanel.action === '생산') {
       if (quickPanel.productionType) parts.push(quickPanel.productionType);
-    } else {
-      if (quickPanel.category) parts.push(quickPanel.category);
-      if (quickPanel.itemName.trim()) parts.push(quickPanel.itemName.trim());
-      if (quickPanel.bagQty.trim()) parts.push(`${quickPanel.bagQty.trim()}bag`);
-      if (quickPanel.kgQty.trim()) parts.push(`${quickPanel.kgQty.trim()}kg`);
+    } else if (quickPanel.category) {
+      parts.push(quickPanel.category);
+      quickPanel.inoutItems.forEach((item) => {
+        const name = item.itemId ? (inventory.find((i) => i.id === item.itemId)?.name || item.itemName) : item.itemName;
+        if (name) {
+          const qty = quickPanel.category === '원료' ? `${item.kgQty}kg` : `${item.bagQty}bag`;
+          parts.push(`${name} ${qty}`);
+        }
+      });
     }
     return parts.join(' / ');
-  }, [quickPanel]);
+  }, [quickPanel, inventory]);
+
+  // 현재 카테고리 아이템 모달 (특정 row용)
+  const modalItems = categoryItems;
 
   return (
     <div className="mb-2 rounded-3xl border border-neutral-200 bg-white p-3 shadow-sm">
@@ -361,21 +402,23 @@ export default function QuickPanel({
           />
         </div>
 
-        {/* 2. 회사 선택 */}
+        {/* 2. 거래처 (생산 제외하고 필수) */}
         <div>
-          <p className="mb-1 text-xs text-neutral-500">거래처 (선택)</p>
+          <p className="mb-1 text-xs text-neutral-500">
+            거래처{quickPanel.action && quickPanel.action !== '생산' ? ' *' : ' (선택)'}
+          </p>
           {sortedCompanies.length > 0 && (
             <select
               value={quickPanel.companyId ?? ''}
               onChange={(e) => {
                 if (e.target.value === '') {
-                  setField('companyId', null);
+                  setQuickPanel((prev) => ({ ...prev, companyId: null, companyName: '' }));
                 } else {
                   const id = Number(e.target.value);
                   const company = companies.find((c) => c.id === id);
                   setQuickPanel((prev) => ({ ...prev, companyId: id, companyName: company?.name ?? '' }));
-                  setError('');
                 }
+                setError('');
               }}
               className="mb-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
             >
@@ -387,8 +430,11 @@ export default function QuickPanel({
           )}
           <input
             value={quickPanel.companyName}
-            onChange={(e) => setQuickPanel((prev) => ({ ...prev, companyName: e.target.value, companyId: null }))}
-            placeholder="거래처명 직접 입력 (없으면 비워도 됨)"
+            onChange={(e) => {
+              setQuickPanel((prev) => ({ ...prev, companyName: e.target.value, companyId: null }));
+              setError('');
+            }}
+            placeholder="거래처명 직접 입력"
             className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
           />
         </div>
@@ -405,10 +451,7 @@ export default function QuickPanel({
                     ...prev,
                     action,
                     category: null,
-                    itemName: '',
-                    selectedItemId: null,
-                    bagQty: '',
-                    kgQty: '',
+                    inoutItems: [{ ...EMPTY_INOUT_ITEM }],
                     productionType: null,
                     sources: [{ itemId: null, customName: '', bagQty: '' }],
                     targetItemId: null,
@@ -417,7 +460,6 @@ export default function QuickPanel({
                     targetKgQty: '',
                   }));
                   setError('');
-                  setItemModalOpen(false);
                 }}
                 className={cn('rounded-2xl border px-2 py-3 text-xs font-medium', quickPanel.action === action ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50 text-neutral-700')}
               >
@@ -427,9 +469,21 @@ export default function QuickPanel({
           </div>
         </div>
 
-        {/* 생산 */}
+        {/* ── 생산 ── */}
         {quickPanel.action === '생산' && (
           <div className="space-y-3">
+            {/* 종료일 (기간 선택) */}
+            <div>
+              <p className="mb-1 text-xs text-neutral-500">종료일 (단일 날짜면 위 날짜와 동일하게)</p>
+              <input
+                type="date"
+                value={quickPanel.productionEndDate}
+                min={quickPanel.date}
+                onChange={(e) => setField('productionEndDate', e.target.value)}
+                className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+              />
+            </div>
+
             <div>
               <p className="mb-1 text-xs text-neutral-500">생산 종류</p>
               <div className="grid grid-cols-2 gap-2">
@@ -577,7 +631,31 @@ export default function QuickPanel({
           </div>
         )}
 
-        {/* 입고/출고 폼 */}
+        {/* ── 재고 ── */}
+        {quickPanel.action === '재고' && (
+          <div>
+            <p className="mb-1 text-xs text-neutral-500">품목</p>
+            <input
+              value={quickPanel.inoutItems[0]?.itemName ?? ''}
+              onChange={(e) => updateInoutItem(0, 'itemName', e.target.value)}
+              placeholder="품목명 입력"
+              className="mb-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+            />
+            <div className="flex flex-wrap gap-2">
+              {inventory.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => updateInoutItem(0, 'itemId', item.id)}
+                  className={cn('rounded-full border px-3 py-2 text-sm', quickPanel.inoutItems[0]?.itemId === item.id ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50 text-neutral-700')}
+                >
+                  {item.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── 입고 / 출고 (다중 품목) ── */}
         {(quickPanel.action === '입고' || quickPanel.action === '출고') && (
           <>
             <div>
@@ -586,7 +664,14 @@ export default function QuickPanel({
                 {CATEGORY_OPTIONS.map((category) => (
                   <button
                     key={category}
-                    onClick={() => setQuickPanel((prev) => ({ ...prev, category, itemName: '', selectedItemId: null, bagQty: '', kgQty: '' }))}
+                    onClick={() => {
+                      setQuickPanel((prev) => ({
+                        ...prev,
+                        category,
+                        inoutItems: [{ ...EMPTY_INOUT_ITEM }],
+                      }));
+                      setError('');
+                    }}
                     className={cn('rounded-2xl border px-3 py-3 text-sm font-medium', quickPanel.category === category ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50 text-neutral-700')}
                   >
                     {category}
@@ -597,93 +682,88 @@ export default function QuickPanel({
 
             {quickPanel.category && (
               <div>
-                <p className="mb-1 text-xs text-neutral-500">품목</p>
-                <input
-                  value={quickPanel.itemName}
-                  onChange={(e) => { setQuickPanel((prev) => ({ ...prev, itemName: e.target.value, selectedItemId: null })); setError(''); }}
-                  placeholder="품목명 입력"
-                  className="mb-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
-                />
-                {quickPanelItems.length > 0 && (
-                  <div className="relative">
-                    <button
-                      onClick={() => setItemModalOpen((prev) => !prev)}
-                      className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-left text-sm text-neutral-700"
-                    >
-                      {quickPanel.selectedItemId ? quickPanelItems.find((i) => i.id === quickPanel.selectedItemId)?.name : '품목 선택'}
-                      <span className="float-right">{itemModalOpen ? '▲' : '▼'}</span>
-                    </button>
-                  </div>
-                )}
-                {willCreateNewItem && (
-                  <div className="mt-2 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
-                    새 품목으로 추가돼. (<b>{quickPanel.category}</b>)
-                  </div>
-                )}
-              </div>
-            )}
+                <p className="mb-2 text-xs text-neutral-500">품목 목록</p>
+                {quickPanel.inoutItems.map((inoutItem, index) => (
+                  <div key={index} className="mb-3 rounded-2xl border border-neutral-100 bg-neutral-50 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-semibold text-neutral-500">품목 {index + 1}</p>
+                      {quickPanel.inoutItems.length > 1 && (
+                        <button
+                          onClick={() => setQuickPanel((prev) => ({ ...prev, inoutItems: prev.inoutItems.filter((_, i) => i !== index) }))}
+                          className="text-red-500 text-xs font-semibold"
+                        >
+                          ✕ 삭제
+                        </button>
+                      )}
+                    </div>
 
-            {quickPanel.category === '원료' && (
-              <div>
-                <p className="mb-1 text-xs text-neutral-500">kg</p>
-                <input
-                  value={quickPanel.kgQty}
-                  onChange={(e) => { setQuickPanel((prev) => ({ ...prev, kgQty: e.target.value })); setError(''); }}
-                  placeholder="kg 수량"
-                  inputMode="decimal"
-                  className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
-                />
-              </div>
-            )}
-            {quickPanel.category && quickPanel.category !== '원료' && (
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <p className="mb-1 text-xs text-neutral-500">bag</p>
-                  <input
-                    value={quickPanel.bagQty}
-                    onChange={(e) => { setQuickPanel((prev) => ({ ...prev, bagQty: e.target.value })); setError(''); }}
-                    placeholder="bag 수"
-                    inputMode="numeric"
-                    className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
-                  />
-                </div>
-                <div>
-                  <p className="mb-1 text-xs text-neutral-500">kg (선택)</p>
-                  <input
-                    value={quickPanel.kgQty}
-                    onChange={(e) => { setQuickPanel((prev) => ({ ...prev, kgQty: e.target.value })); setError(''); }}
-                    placeholder="없으면 비워둬"
-                    inputMode="decimal"
-                    className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
-                  />
-                </div>
+                    {/* 품목 선택 버튼 */}
+                    <button
+                      onClick={() => setItemModalIndex(index)}
+                      className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-left text-sm text-neutral-700"
+                    >
+                      {inoutItem.itemId ? (inventory.find((i) => i.id === inoutItem.itemId)?.name ?? '품목 선택') : '품목 선택 ▼'}
+                    </button>
+
+                    {/* 직접 입력 */}
+                    <input
+                      value={inoutItem.itemName}
+                      onChange={(e) => {
+                        updateInoutItem(index, 'itemName', e.target.value);
+                        updateInoutItem(index, 'itemId', null);
+                      }}
+                      placeholder="또는 품목명 직접 입력"
+                      className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+                    />
+
+                    {/* 수량 */}
+                    {quickPanel.category === '원료' ? (
+                      <div>
+                        <p className="mb-1 text-[11px] text-neutral-400">kg</p>
+                        <input
+                          value={inoutItem.kgQty}
+                          onChange={(e) => updateInoutItem(index, 'kgQty', e.target.value)}
+                          placeholder="kg 수량"
+                          inputMode="decimal"
+                          className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                        />
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <p className="mb-1 text-[11px] text-neutral-400">bag</p>
+                          <input
+                            value={inoutItem.bagQty}
+                            onChange={(e) => updateInoutItem(index, 'bagQty', e.target.value)}
+                            placeholder="bag 수"
+                            inputMode="numeric"
+                            className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                          />
+                        </div>
+                        <div>
+                          <p className="mb-1 text-[11px] text-neutral-400">kg (선택)</p>
+                          <input
+                            value={inoutItem.kgQty}
+                            onChange={(e) => updateInoutItem(index, 'kgQty', e.target.value)}
+                            placeholder="없으면 비워둬"
+                            inputMode="decimal"
+                            className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                <button
+                  onClick={() => setQuickPanel((prev) => ({ ...prev, inoutItems: [...prev.inoutItems, { ...EMPTY_INOUT_ITEM }] }))}
+                  className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-600"
+                >
+                  + 품목 추가
+                </button>
               </div>
             )}
           </>
-        )}
-
-        {/* 재고 */}
-        {quickPanel.action === '재고' && (
-          <div>
-            <p className="mb-1 text-xs text-neutral-500">품목</p>
-            <input
-              value={quickPanel.itemName}
-              onChange={(e) => { setQuickPanel((prev) => ({ ...prev, itemName: e.target.value, selectedItemId: null })); setError(''); }}
-              placeholder="품목명 입력"
-              className="mb-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
-            />
-            <div className="flex flex-wrap gap-2">
-              {inventory.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => setQuickPanel((prev) => ({ ...prev, selectedItemId: item.id, itemName: item.name }))}
-                  className={cn('rounded-full border px-3 py-2 text-sm', quickPanel.selectedItemId === item.id ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50 text-neutral-700')}
-                >
-                  {item.name}
-                </button>
-              ))}
-            </div>
-          </div>
         )}
 
         {/* 선택값 요약 */}
@@ -704,23 +784,37 @@ export default function QuickPanel({
       </div>
 
       {/* 품목 선택 모달 */}
-      {itemModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setItemModalOpen(false)}>
+      {itemModalIndex !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setItemModalIndex(null)}>
           <div className="w-full max-w-md rounded-3xl bg-white p-4 pb-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm font-semibold">품목 선택</p>
-              <button onClick={() => setItemModalOpen(false)} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
+              <button onClick={() => setItemModalIndex(null)} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
             </div>
             <div className="max-h-80 overflow-y-auto space-y-2">
-              {quickPanelItems.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => { setQuickPanel((prev) => ({ ...prev, selectedItemId: item.id, itemName: item.name })); setItemModalOpen(false); setError(''); }}
-                  className={cn('w-full rounded-2xl border px-4 py-3 text-left text-sm font-medium', quickPanel.selectedItemId === item.id ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50 text-neutral-700')}
-                >
-                  {item.name}
-                </button>
-              ))}
+              {modalItems.length === 0 ? (
+                <p className="text-sm text-neutral-500 text-center py-4">해당 카테고리에 품목이 없어.</p>
+              ) : (
+                modalItems.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      const idx = itemModalIndex;
+                      setQuickPanel((prev) => {
+                        const next = [...prev.inoutItems];
+                        next[idx] = { ...next[idx], itemId: item.id, itemName: item.name };
+                        return { ...prev, inoutItems: next };
+                      });
+                      setItemModalIndex(null);
+                      setError('');
+                    }}
+                    className={cn('w-full rounded-2xl border px-4 py-3 text-left text-sm font-medium', quickPanel.inoutItems[itemModalIndex]?.itemId === item.id ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50 text-neutral-700')}
+                  >
+                    {item.name}
+                    <span className="ml-2 text-xs text-neutral-400">{Number(item.current_stock).toLocaleString()}{item.unit}</span>
+                  </button>
+                ))
+              )}
             </div>
           </div>
         </div>

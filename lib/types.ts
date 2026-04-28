@@ -1,4 +1,4 @@
-export type TabKey = 'chat' | 'inout' | 'calendar' | 'stock' | 'settlement';
+export type TabKey = 'chat' | 'calendar' | 'stock' | 'settlement';
 export type MessageType = 'chat' | 'command' | 'system';
 export type InventoryCategory = '원료' | '분쇄품' | '스크랩';
 export type QuickAction = '재고' | '입고' | '출고' | '생산';
@@ -29,6 +29,7 @@ export type InventoryLogRow = {
   action: 'in' | 'out';
   qty: number;
   created_at: string;
+  date?: string | null;
   note?: string | null;
   user_id?: string | null;
   user_email?: string | null;
@@ -69,6 +70,7 @@ export type Invoice = {
   date: string;
   invoice_issued: boolean;
   payment_done: boolean;
+  factory?: string | null;
   note?: string | null;
   created_at: string;
   items?: InvoiceItem[];
@@ -80,17 +82,24 @@ export type ProductionSource = {
   bagQty: string;
 };
 
+// 입고/출고 다중 품목 한 줄
+export type InOutItem = {
+  itemId: number | null;
+  itemName: string;
+  bagQty: string;
+  kgQty: string;
+};
+
 export type QuickPanelState = {
   isOpen: boolean;
   date: string;
+  productionEndDate: string;
   companyId: number | null;
   companyName: string;
   action: QuickAction | null;
   category: InventoryCategory | null;
-  itemName: string;
-  selectedItemId: number | null;
-  bagQty: string;
-  kgQty: string;
+  // 입고/출고 다중 품목
+  inoutItems: InOutItem[];
   productionType: ProductionType | null;
   sources: ProductionSource[];
   targetItemId: number | null;

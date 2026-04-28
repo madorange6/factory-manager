@@ -44,6 +44,16 @@ alter table inventory_logs
   add column if not exists company_name text;
 
 -- =============================================
+-- 2차 수정 마이그레이션 (추가 실행)
+-- =============================================
+
+-- inventory_logs에 date 컬럼 추가 (빠른입력 날짜 버그 수정)
+alter table inventory_logs add column if not exists date date;
+
+-- invoices에 factory 컬럼 추가 (공장별 계산서 발행)
+alter table invoices add column if not exists factory text check (factory in ('1공장', '2공장')) default null;
+
+-- =============================================
 -- RLS 설정 (필요시)
 -- =============================================
 -- alter table companies enable row level security;
