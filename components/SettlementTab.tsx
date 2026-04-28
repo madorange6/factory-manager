@@ -34,6 +34,7 @@ type DirectionFilter = 'all' | 'receivable' | 'payable';
 type PaymentModal = {
   open: boolean;
   invoiceId: number | null;
+  editingPaymentId: number | null; // null = 새 추가, number = 수정
   date: string;
   amount: string;
   memo: string;
@@ -44,6 +45,7 @@ type PaymentModal = {
 const EMPTY_PAYMENT_MODAL: PaymentModal = {
   open: false,
   invoiceId: null,
+  editingPaymentId: null,
   date: todayString(),
   amount: '',
   memo: '',
@@ -310,8 +312,8 @@ export default function SettlementTab({ companies }: Props) {
     }
   }
 
-  // 입금내역 추가
-  async function handleAddPayment() {
+  // 입금내역 추가 / 수정
+  async function handleSavePayment() {
     if (!paymentModal.invoiceId) return;
     const amount = Number(paymentModal.amount);
     if (!amount || amount <= 0) {
@@ -325,21 +327,39 @@ export default function SettlementTab({ companies }: Props) {
 
     try {
       setPaymentModal((prev) => ({ ...prev, saving: true, error: '' }));
-      const { error: payError } = await supabase.from('payments').insert({
-        invoice_id: paymentModal.invoiceId,
-        amount,
-        date: paymentModal.date,
-        memo: paymentModal.memo.trim() || null,
-      });
-      if (payError) throw payError;
 
-      // 결제 완료 자동 체크: 합산 >= total 이면 payment_done = true
+      if (paymentModal.editingPaymentId !== null) {
+        // 수정
+        const { error: payError } = await supabase.from('payments').update({
+          amount,
+          date: paymentModal.date,
+          memo: paymentModal.memo.trim() || null,
+        }).eq('id', paymentModal.editingPaymentId);
+        if (payError) throw payError;
+      } else {
+        // 신규 추가
+        const { error: payError } = await supabase.from('payments').insert({
+          invoice_id: paymentModal.invoiceId,
+          amount,
+          date: paymentModal.date,
+          memo: paymentModal.memo.trim() || null,
+        });
+        if (payError) throw payError;
+      }
+
+      // payment_done 자동 체크 (최신 데이터로 재계산)
       const inv = invoices.find((i) => i.id === paymentModal.invoiceId);
       if (inv) {
         const total = calcItemTotals(inv.items).total;
-        const newPaid = calcPaid(inv.payments) + amount;
+        // 기존 합산에서 수정 전 금액을 빼고 새 금액을 더해 계산
+        const oldPaid = paymentModal.editingPaymentId !== null
+          ? calcPaid(inv.payments.filter((p) => p.id !== paymentModal.editingPaymentId))
+          : calcPaid(inv.payments);
+        const newPaid = oldPaid + amount;
         if (newPaid >= total && !inv.payment_done) {
           await supabase.from('invoices').update({ payment_done: true }).eq('id', inv.id);
+        } else if (newPaid < total && inv.payment_done) {
+          await supabase.from('invoices').update({ payment_done: false }).eq('id', inv.id);
         }
       }
 
@@ -347,6 +367,29 @@ export default function SettlementTab({ companies }: Props) {
       await fetchInvoices();
     } catch (error) {
       setPaymentModal((prev) => ({ ...prev, saving: false, error: getErrorMessage(error) }));
+    }
+  }
+
+  // 입금내역 삭제
+  async function handleDeletePayment(paymentId: number, invoiceId: number) {
+    if (!window.confirm('이 입금내역을 삭제할까요?')) return;
+    try {
+      const { error } = await supabase.from('payments').delete().eq('id', paymentId);
+      if (error) throw error;
+
+      // payment_done 자동 재계산
+      const inv = invoices.find((i) => i.id === invoiceId);
+      if (inv && inv.payment_done) {
+        const total = calcItemTotals(inv.items).total;
+        const newPaid = calcPaid(inv.payments.filter((p) => p.id !== paymentId));
+        if (newPaid < total) {
+          await supabase.from('invoices').update({ payment_done: false }).eq('id', inv.id);
+        }
+      }
+
+      await fetchInvoices();
+    } catch (error) {
+      setErrorText(getErrorMessage(error));
     }
   }
 
@@ -630,9 +673,32 @@ export default function SettlementTab({ companies }: Props) {
                                 {inv.direction === 'receivable' ? '입금 내역' : '지급 내역'}
                               </p>
                               {sortedPayments.map((p) => (
-                                <div key={p.id} className="flex items-center justify-between text-xs">
-                                  <span className="text-neutral-500">{p.date}{p.memo ? ` · ${p.memo}` : ''}</span>
-                                  <span className="font-semibold text-neutral-700">{formatCurrency(p.amount)}원</span>
+                                <div key={p.id} className="flex items-center justify-between gap-1 text-xs">
+                                  <span className="flex-1 text-neutral-500 min-w-0 truncate">
+                                    {p.date}{p.memo ? ` · ${p.memo}` : ''}
+                                  </span>
+                                  <span className="font-semibold text-neutral-700 shrink-0">{formatCurrency(p.amount)}원</span>
+                                  <button
+                                    onClick={() => setPaymentModal({
+                                      open: true,
+                                      invoiceId: inv.id,
+                                      editingPaymentId: p.id,
+                                      date: p.date,
+                                      amount: String(p.amount),
+                                      memo: p.memo ?? '',
+                                      saving: false,
+                                      error: '',
+                                    })}
+                                    className="shrink-0 rounded-lg border border-neutral-200 bg-white px-1.5 py-0.5 text-[10px] text-neutral-600 hover:bg-neutral-100"
+                                  >
+                                    수정
+                                  </button>
+                                  <button
+                                    onClick={() => void handleDeletePayment(p.id, inv.id)}
+                                    className="shrink-0 rounded-lg border border-red-100 bg-red-50 px-1.5 py-0.5 text-[10px] text-red-600 hover:bg-red-100"
+                                  >
+                                    삭제
+                                  </button>
                                 </div>
                               ))}
                               <div className="flex justify-between text-xs font-bold pt-1 border-t border-neutral-200">
@@ -648,7 +714,7 @@ export default function SettlementTab({ companies }: Props) {
 
                           {/* + 입금내역 추가 버튼 */}
                           <button
-                            onClick={() => setPaymentModal({ open: true, invoiceId: inv.id, date: todayString(), amount: '', memo: '', saving: false, error: '' })}
+                            onClick={() => setPaymentModal({ open: true, invoiceId: inv.id, editingPaymentId: null, date: todayString(), amount: '', memo: '', saving: false, error: '' })}
                             className="mb-2 w-full rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:bg-neutral-100"
                           >
                             + {inv.direction === 'receivable' ? '입금내역' : '지급내역'} 추가
@@ -693,12 +759,12 @@ export default function SettlementTab({ companies }: Props) {
         </div>
       )}
 
-      {/* 입금내역 추가 모달 */}
+      {/* 입금내역 추가/수정 모달 */}
       {paymentModal.open && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setPaymentModal(EMPTY_PAYMENT_MODAL)}>
           <div className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-10" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
-              <p className="text-base font-bold">입금/지급 내역 추가</p>
+              <p className="text-base font-bold">{paymentModal.editingPaymentId !== null ? '입금/지급 수정' : '입금/지급 내역 추가'}</p>
               <button onClick={() => setPaymentModal(EMPTY_PAYMENT_MODAL)} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
             </div>
             <div className="space-y-3">
@@ -737,11 +803,11 @@ export default function SettlementTab({ companies }: Props) {
                 <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{paymentModal.error}</div>
               )}
               <button
-                onClick={() => void handleAddPayment()}
+                onClick={() => void handleSavePayment()}
                 disabled={paymentModal.saving}
                 className="w-full rounded-2xl bg-neutral-900 px-4 py-4 text-sm font-semibold text-white disabled:opacity-50"
               >
-                {paymentModal.saving ? '저장중' : '추가'}
+                {paymentModal.saving ? '저장중' : paymentModal.editingPaymentId !== null ? '수정 저장' : '추가'}
               </button>
             </div>
           </div>
