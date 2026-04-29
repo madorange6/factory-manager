@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase/client';
-import { InventoryCategory, InventoryItem, UserProfile } from '../lib/types';
+import { Company, InventoryCategory, InventoryItem, UserProfile } from '../lib/types';
 import { cn, getErrorMessage, normalizeCategory } from '../lib/utils';
 
 const ADMIN_EMAIL = 'sj_advisory@naver.com';
@@ -11,21 +11,25 @@ const CATEGORY_OPTIONS: InventoryCategory[] = ['원료', '분쇄품', '스크랩
 type Props = {
   inventory: InventoryItem[];
   profiles: UserProfile[];
+  companies: Company[];
   currentUserId: string | null;
   currentUserEmail: string | null;
   setCurrentUserName: (name: string) => void;
   onRefreshInventory: () => Promise<void>;
   onRefreshProfiles: () => Promise<void>;
+  onCompanyAdded: () => Promise<void>;
 };
 
 export default function StockTab({
   inventory,
   profiles,
+  companies,
   currentUserId,
   currentUserEmail,
   setCurrentUserName,
   onRefreshInventory,
   onRefreshProfiles,
+  onCompanyAdded,
 }: Props) {
   const [manageMode, setManageMode] = useState(false);
   const [stockSearch, setStockSearch] = useState('');
@@ -37,6 +41,8 @@ export default function StockTab({
   const [newItemUnit, setNewItemUnit] = useState('kg');
   const [newItemStock, setNewItemStock] = useState('');
   const [newItemCategory, setNewItemCategory] = useState<InventoryCategory>('원료');
+  const [newItemCompanyId, setNewItemCompanyId] = useState<number | null>(null);
+  const [newItemCompanyName, setNewItemCompanyName] = useState('');
   const [creatingItem, setCreatingItem] = useState(false);
 
   // 품목 수정
@@ -45,6 +51,12 @@ export default function StockTab({
   const [editingItemStock, setEditingItemStock] = useState('');
   const [editingItemMemo, setEditingItemMemo] = useState('');
   const [editingItemCategory, setEditingItemCategory] = useState<InventoryCategory>('원료');
+  const [editingItemCompanyId, setEditingItemCompanyId] = useState<number | null>(null);
+  const [editingItemCompanyName, setEditingItemCompanyName] = useState('');
+
+  // C안 거래처 등록 프롬프트
+  const [pendingCompanyName, setPendingCompanyName] = useState<string | null>(null);
+  const [addingCompany, setAddingCompany] = useState(false);
 
   // 직원 이름
   const [userNameDrafts, setUserNameDrafts] = useState<Record<string, string>>({});
@@ -52,6 +64,14 @@ export default function StockTab({
 
   const isAdmin = currentUserEmail === ADMIN_EMAIL;
   const stockTabs = ['원료', '분쇄품', '스크랩'];
+
+  const sortedCompanies = useMemo(() => {
+    return [...companies].sort((a, b) => {
+      if (a.is_favorite && !b.is_favorite) return -1;
+      if (!a.is_favorite && b.is_favorite) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [companies]);
 
   const filteredStock = useMemo(() => {
     return inventory.filter((item) => {
@@ -62,21 +82,67 @@ export default function StockTab({
     });
   }, [inventory, stockSearch, stockCategory]);
 
+  // 거래처명 + 품목명 합치기
+  function applyPrefix(company: string, baseName: string): string {
+    const c = company.trim();
+    const n = baseName.trim();
+    if (!c) return n;
+    if (n.startsWith(c + ' ')) return n;
+    return `${c} ${n}`;
+  }
+
+  // 기존 품목명에서 거래처명 분리
+  function parseItemName(name: string): { companyId: number | null; companyName: string; baseName: string } {
+    for (const company of companies) {
+      if (name.startsWith(company.name + ' ')) {
+        return { companyId: company.id, companyName: company.name, baseName: name.slice(company.name.length + 1) };
+      }
+    }
+    return { companyId: null, companyName: '', baseName: name };
+  }
+
+  // 이 거래처명이 목록에 없는 신규인지 확인
+  function isNewCompanyName(name: string): boolean {
+    const trimmed = name.trim();
+    if (!trimmed) return false;
+    return !companies.some((c) => c.name === trimmed);
+  }
+
+  async function handleAddCompany(name: string) {
+    try {
+      setAddingCompany(true);
+      const { error } = await supabase.from('companies').insert({ name, is_favorite: false });
+      if (error) throw error;
+      await onCompanyAdded();
+    } catch (e) {
+      setErrorText(getErrorMessage(e));
+    } finally {
+      setAddingCompany(false);
+      setPendingCompanyName(null);
+    }
+  }
+
   async function handleCreateItem() {
-    const name = newItemName.trim();
+    const baseName = newItemName.trim();
     const stock = newItemStock.trim() === '' ? 0 : Number(newItemStock);
-    if (!name) { setErrorText('새 품목명을 입력해줘.'); return; }
+    if (!baseName) { setErrorText('새 품목명을 입력해줘.'); return; }
     if (!newItemUnit.trim()) { setErrorText('단위를 입력해줘.'); return; }
     if (!Number.isFinite(stock) || stock < 0) { setErrorText('초기 재고는 0 이상 숫자로 입력해줘.'); return; }
+    const finalName = applyPrefix(newItemCompanyName, baseName);
     try {
       setCreatingItem(true);
       setErrorText('');
       const { error } = await supabase.from('inventory_items').insert({
-        name, category: newItemCategory, unit: newItemUnit.trim(), current_stock: stock,
+        name: finalName, category: newItemCategory, unit: newItemUnit.trim(), current_stock: stock,
       });
       if (error) throw error;
+      const newCompany = newItemCompanyName.trim();
       setNewItemName(''); setNewItemUnit('kg'); setNewItemStock(''); setNewItemCategory('원료');
+      setNewItemCompanyId(null); setNewItemCompanyName('');
       await onRefreshInventory();
+      if (isNewCompanyName(newCompany)) {
+        setPendingCompanyName(newCompany);
+      }
     } catch (error) {
       setErrorText(getErrorMessage(error));
     } finally {
@@ -85,18 +151,23 @@ export default function StockTab({
   }
 
   async function handleUpdateItem(itemId: number) {
-    const name = editingItemName.trim();
+    const baseName = editingItemName.trim();
     const stock = Number(editingItemStock);
-    if (!name) { setErrorText('품목명을 입력해줘.'); return; }
+    if (!baseName) { setErrorText('품목명을 입력해줘.'); return; }
     if (!Number.isFinite(stock) || stock < 0) { setErrorText('재고는 0 이상 숫자로 입력해줘.'); return; }
+    const finalName = applyPrefix(editingItemCompanyName, baseName);
     try {
       setErrorText('');
       const { error } = await supabase.from('inventory_items').update({
-        name, current_stock: stock, category: editingItemCategory, memo: editingItemMemo,
+        name: finalName, current_stock: stock, category: editingItemCategory, memo: editingItemMemo,
       }).eq('id', itemId);
       if (error) throw error;
+      const newCompany = editingItemCompanyName.trim();
       setEditingItemId(null);
       await onRefreshInventory();
+      if (isNewCompanyName(newCompany)) {
+        setPendingCompanyName(newCompany);
+      }
     } catch (error) {
       setErrorText(getErrorMessage(error));
     }
@@ -142,10 +213,82 @@ export default function StockTab({
     }
   }
 
+  // 거래처 선택 공통 UI 컴포넌트 (인라인)
+  function CompanySelector({
+    companyId,
+    companyName,
+    onSelectId,
+    onChangeName,
+  }: {
+    companyId: number | null;
+    companyName: string;
+    onSelectId: (id: number | null, name: string) => void;
+    onChangeName: (name: string) => void;
+  }) {
+    return (
+      <div>
+        <p className="mb-1 text-xs text-neutral-500">거래처 (선택)</p>
+        {sortedCompanies.length > 0 && (
+          <select
+            value={companyId ?? ''}
+            onChange={(e) => {
+              if (e.target.value === '') {
+                onSelectId(null, '');
+              } else {
+                const id = Number(e.target.value);
+                const company = companies.find((c) => c.id === id);
+                onSelectId(id, company?.name ?? '');
+              }
+            }}
+            className="mb-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+          >
+            <option value="">거래처 없음 / 직접 입력</option>
+            {sortedCompanies.map((c) => (
+              <option key={c.id} value={c.id}>{c.is_favorite ? '⭐ ' : ''}{c.name}</option>
+            ))}
+          </select>
+        )}
+        <input
+          value={companyName}
+          onChange={(e) => onChangeName(e.target.value)}
+          placeholder="또는 거래처명 직접 입력"
+          className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="px-3 py-4">
       {errorText && (
         <div className="mb-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{errorText}</div>
+      )}
+
+      {/* C안 거래처 등록 모달 */}
+      {pendingCompanyName && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setPendingCompanyName(null)}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-10" onClick={(e) => e.stopPropagation()}>
+            <p className="text-base font-bold mb-1">거래처 등록</p>
+            <p className="text-sm text-neutral-600 mb-4">
+              <b>{pendingCompanyName}</b>을(를) 거래처 목록에 추가할까요?
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => void handleAddCompany(pendingCompanyName)}
+                disabled={addingCompany}
+                className="rounded-2xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {addingCompany ? '추가중' : '추가'}
+              </button>
+              <button
+                onClick={() => setPendingCompanyName(null)}
+                className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-medium text-neutral-700"
+              >
+                이번만 사용
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="mb-3 flex items-center gap-2">
@@ -238,10 +381,27 @@ export default function StockTab({
             </div>
           </div>
 
+          {/* 새 품목 추가 */}
           <div className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm">
             <p className="mb-3 text-sm font-semibold">새 품목 추가</p>
             <div className="space-y-2">
-              <input value={newItemName} onChange={(e) => setNewItemName(e.target.value)} placeholder="품목명" className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400" />
+              <CompanySelector
+                companyId={newItemCompanyId}
+                companyName={newItemCompanyName}
+                onSelectId={(id, name) => { setNewItemCompanyId(id); setNewItemCompanyName(name); }}
+                onChangeName={(name) => { setNewItemCompanyName(name); setNewItemCompanyId(null); }}
+              />
+              <div>
+                <p className="mb-1 text-xs text-neutral-500">
+                  품목명{newItemCompanyName.trim() ? ` (저장 시 "${newItemCompanyName.trim()} " 자동 추가)` : ''}
+                </p>
+                <input
+                  value={newItemName}
+                  onChange={(e) => setNewItemName(e.target.value)}
+                  placeholder="품목명"
+                  className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+                />
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <input value={newItemUnit} onChange={(e) => setNewItemUnit(e.target.value)} placeholder="단위 (kg, bag 등)" className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400" />
                 <input value={newItemStock} onChange={(e) => setNewItemStock(e.target.value)} placeholder="초기 재고" inputMode="decimal" className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400" />
@@ -253,18 +413,45 @@ export default function StockTab({
                   </button>
                 ))}
               </div>
+              {newItemCompanyName.trim() && newItemName.trim() && (
+                <div className="rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  저장될 품목명: <b>{applyPrefix(newItemCompanyName, newItemName)}</b>
+                </div>
+              )}
               <button onClick={() => void handleCreateItem()} disabled={creatingItem} className="w-full rounded-2xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">
                 {creatingItem ? '추가중' : '품목 추가'}
               </button>
             </div>
           </div>
 
+          {/* 품목 목록 + 수정 */}
           <div className="space-y-3">
             {inventory.map((item) => (
               <div key={item.id} className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm">
                 {editingItemId === item.id ? (
                   <div className="space-y-2">
-                    <input value={editingItemName} onChange={(e) => setEditingItemName(e.target.value)} placeholder="품목명" className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400" />
+                    <CompanySelector
+                      companyId={editingItemCompanyId}
+                      companyName={editingItemCompanyName}
+                      onSelectId={(id, name) => { setEditingItemCompanyId(id); setEditingItemCompanyName(name); }}
+                      onChangeName={(name) => { setEditingItemCompanyName(name); setEditingItemCompanyId(null); }}
+                    />
+                    <div>
+                      <p className="mb-1 text-xs text-neutral-500">
+                        품목명{editingItemCompanyName.trim() ? ` (거래처명 제외)` : ''}
+                      </p>
+                      <input
+                        value={editingItemName}
+                        onChange={(e) => setEditingItemName(e.target.value)}
+                        placeholder="품목명"
+                        className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                      />
+                    </div>
+                    {editingItemCompanyName.trim() && editingItemName.trim() && (
+                      <div className="rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                        저장될 품목명: <b>{applyPrefix(editingItemCompanyName, editingItemName)}</b>
+                      </div>
+                    )}
                     <input value={editingItemStock} onChange={(e) => setEditingItemStock(e.target.value)} placeholder="재고량" inputMode="decimal" className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400" />
                     <textarea value={editingItemMemo} onChange={(e) => setEditingItemMemo(e.target.value)} placeholder="메모 (선택)" className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400 resize-none" rows={2} />
                     <div className="grid grid-cols-3 gap-2">
@@ -289,8 +476,11 @@ export default function StockTab({
                     </div>
                     <button
                       onClick={() => {
+                        const parsed = parseItemName(item.name);
                         setEditingItemId(item.id);
-                        setEditingItemName(item.name);
+                        setEditingItemName(parsed.baseName);
+                        setEditingItemCompanyId(parsed.companyId);
+                        setEditingItemCompanyName(parsed.companyName);
                         setEditingItemStock(String(item.current_stock));
                         setEditingItemMemo(item.memo ?? '');
                         setEditingItemCategory((normalizeCategory(item.category) as InventoryCategory) || '원료');

@@ -203,11 +203,13 @@ export default function Page() {
                 <StockTab
                   inventory={inventory}
                   profiles={profiles}
+                  companies={companies}
                   currentUserId={currentUserId}
                   currentUserEmail={currentUserEmail}
                   setCurrentUserName={setCurrentUserName}
                   onRefreshInventory={fetchInventory}
                   onRefreshProfiles={fetchProfiles}
+                  onCompanyAdded={fetchCompanies}
                 />
               )}
               {activeTab === 'settlement' && canViewFinance && (

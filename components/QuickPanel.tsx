@@ -107,11 +107,22 @@ export default function QuickPanel({
   }, [quickPanel.category, quickPanel.companyName, inventory]);
 
   const existingProductionTargetItem = useMemo(() => {
-    const typed = quickPanel.targetItemName.trim().toLowerCase();
-    if (!typed || !quickPanel.productionType) return null;
+    const raw = quickPanel.targetItemName.trim();
+    if (!raw || !quickPanel.productionType) return null;
+    const company = quickPanel.companyName.trim();
+    // 거래처 선택 시 prefix 적용 후 매칭
+    const typed = (company && !raw.startsWith(company + ' ')) ? `${company} ${raw}` : raw;
     const targetCategory = quickPanel.productionType === '원료생산' ? '원료' : '분쇄품';
-    return inventory.find((item) => item.name.trim().toLowerCase() === typed && normalizeCategory(item.category) === targetCategory) ?? null;
-  }, [inventory, quickPanel.targetItemName, quickPanel.productionType]);
+    return inventory.find((item) => item.name.trim().toLowerCase() === typed.toLowerCase() && normalizeCategory(item.category) === targetCategory) ?? null;
+  }, [inventory, quickPanel.targetItemName, quickPanel.productionType, quickPanel.companyName]);
+
+  // 거래처 선택 시 생산 결과 품목도 필터링
+  const filteredProductionTargetItems = useMemo(() => {
+    const prefix = quickPanel.companyName.trim();
+    if (!prefix) return productionTargetItems;
+    const filtered = productionTargetItems.filter((item) => item.name.startsWith(prefix + ' '));
+    return filtered.length > 0 ? filtered : productionTargetItems;
+  }, [productionTargetItems, quickPanel.companyName]);
 
   const willCreateProductionTargetItem = useMemo(() => {
     if (quickPanel.action !== '생산') return false;
@@ -236,7 +247,7 @@ export default function QuickPanel({
     }
 
     const userMemo = quickPanel.memo.trim();
-    const isNewCompany = !quickPanel.companyId && quickPanel.companyName.trim() !== '' && action !== '생산';
+    const isNewCompany = !quickPanel.companyId && quickPanel.companyName.trim() !== '';
 
     // ── 생산 ──
     if (action === '생산') {
@@ -260,7 +271,8 @@ export default function QuickPanel({
 
       const targetCategory: InventoryCategory = productionType === '원료생산' ? '원료' : '분쇄품';
       let targetItem = inventory.find((item) => item.id === quickPanel.targetItemId) ?? existingProductionTargetItem ?? null;
-      const typedTargetName = quickPanel.targetItemName.trim();
+      // 거래처 선택 시 결과 품목명에 prefix 적용
+      const typedTargetName = applyCompanyPrefix(quickPanel.targetItemName.trim());
 
       if (!targetItem && !typedTargetName) { setError('결과 품목을 선택하거나 새로 입력해줘.'); return; }
       if (!targetItem && typedTargetName) {
@@ -291,8 +303,13 @@ export default function QuickPanel({
         await updateStock(targetItem.id, Number(targetItem.current_stock ?? 0) + targetKgQty);
         await insertLog(targetItem.id, 'in', targetKgQty, `production_result:원료생산:${sourceNames || '없음'} / ${dateNote}${memoNote}`);
         await saveMsg(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetKgQty}kg 생산 완료.`, 'system');
-        onClose();
-        await onDone();
+        if (isNewCompany) {
+          setPendingCompanyName(quickPanel.companyName.trim());
+          await onDone();
+        } else {
+          onClose();
+          await onDone();
+        }
         return;
       }
 
@@ -309,8 +326,13 @@ export default function QuickPanel({
         await updateStock(targetItem.id, Number(targetItem.current_stock ?? 0) + targetBagQty);
         await insertLog(targetItem.id, 'in', targetBagQty, `production_result:분쇄품생산:${sourceNames || '없음'} / ${dateNote}${memoNote}`);
         await saveMsg(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetBagQty}bag 생산 완료.`, 'system');
-        onClose();
-        await onDone();
+        if (isNewCompany) {
+          setPendingCompanyName(quickPanel.companyName.trim());
+          await onDone();
+        } else {
+          onClose();
+          await onDone();
+        }
         return;
       }
     }
@@ -660,7 +682,7 @@ export default function QuickPanel({
                     className="mb-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
                   />
                   <div className="flex flex-wrap gap-2">
-                    {productionTargetItems.map((item) => (
+                    {filteredProductionTargetItems.map((item) => (
                       <button
                         key={item.id}
                         onClick={() => setQuickPanel((prev) => ({ ...prev, targetItemId: item.id, targetItemName: item.name }))}
