@@ -87,15 +87,11 @@ export default function StockTab({
     });
   }, [inventory, stockSearch, stockCategory, stockViewMode, selectedCompanyFilter]);
 
-  // 품목명에서 거래처명/기본명 분리
+  // 품목명에서 거래처명/기본명 분리 (첫 단어 = 거래처, 나머지 = 품목명)
   function splitItemDisplay(name: string): { company: string; baseName: string } {
     const parts = name.split(' ');
     if (parts.length <= 1) return { company: '', baseName: name };
-    // 첫 단어가 등록된 거래처명이면 분리, 아니면 전체를 baseName으로
-    const firstWord = parts[0];
-    const isKnownCompany = companies.some((c) => c.name === firstWord);
-    if (isKnownCompany) return { company: firstWord, baseName: parts.slice(1).join(' ') };
-    return { company: '', baseName: name };
+    return { company: parts[0], baseName: parts.slice(1).join(' ') };
   }
 
   // 거래처명 + 품목명 합치기
@@ -190,9 +186,12 @@ export default function StockTab({
   }
 
   async function handleDeleteItem(itemId: number) {
-    if (!window.confirm('이 품목을 삭제할까요?')) return;
+    if (!window.confirm('이 품목과 관련된 모든 입출고 기록도 함께 삭제됩니다. 삭제할까요?')) return;
     try {
       setErrorText('');
+      // 관련 입출고 로그 먼저 삭제 (외래키 오류 방지)
+      const { error: logError } = await supabase.from('inventory_logs').delete().eq('item_id', itemId);
+      if (logError) throw logError;
       const { error } = await supabase.from('inventory_items').delete().eq('id', itemId);
       if (error) throw error;
       await onRefreshInventory();
