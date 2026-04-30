@@ -85,6 +85,7 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
 
   const [pendingCompanyName, setPendingCompanyName] = useState<string | null>(null);
   const [addingCompany, setAddingCompany] = useState(false);
+  const [expandedDoneIds, setExpandedDoneIds] = useState<Set<number>>(new Set());
 
   useEffect(() => { void fetchInvoices(); }, []);
 
@@ -660,8 +661,14 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
           {sortedGroupKeys.map((companyName) => {
             const groupInvoices = groupMap.get(companyName)!;
             const isExpanded = expandedGroups.has(companyName);
-            const groupTotal = groupInvoices.reduce((s, inv) => s + calcItemTotals(inv.items).total, 0);
-            const hasPending = groupInvoices.some((inv) => !inv.payment_done);
+            const pendingInvoices = groupInvoices.filter((inv) => !inv.payment_done);
+            const pendingCount = pendingInvoices.length;
+            const pendingAmount = pendingInvoices.reduce((s, inv) => {
+              const total = calcItemTotals(inv.items).total;
+              const paid = calcPaid(inv.payments);
+              return s + Math.max(0, total - paid);
+            }, 0);
+            const hasPending = pendingCount > 0;
 
             return (
               <div key={companyName} className="rounded-3xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
@@ -672,11 +679,11 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
                   <div className="flex items-center gap-2 min-w-0">
                     {hasPending && <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" />}
                     <p className="font-semibold truncate">{companyName}</p>
+                    {pendingCount > 0 && (
+                      <span className="text-xs text-neutral-400 shrink-0">{pendingCount}건 · {formatCurrency(pendingAmount)}원</span>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-sm font-bold text-neutral-700">{formatCurrency(groupTotal)}원</span>
-                    <span className="text-neutral-400 text-sm">{isExpanded ? '▲' : '▼'}</span>
-                  </div>
+                  <span className="text-neutral-400 text-sm shrink-0">{isExpanded ? '▲' : '▼'}</span>
                 </button>
 
                 {isExpanded && (
@@ -687,24 +694,86 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
                       const remaining = Math.max(0, totals.total - paid);
                       const sortedPayments = [...inv.payments].sort((a, b) => a.date.localeCompare(b.date));
 
-                      // 완료 항목: 접힌 형태로 날짜만 표시
+                      // 완료 항목: 접힌/펼친 토글
                       if (inv.payment_done) {
+                        const isDoneExpanded = expandedDoneIds.has(inv.id);
+                        const lastPaymentDate = inv.payments.length > 0
+                          ? [...inv.payments].sort((a, b) => b.date.localeCompare(a.date))[0].date.replace(/-/g, '.')
+                          : null;
+                        const invDateStr = inv.date.replace(/-/g, '.');
+                        const doneTotal = calcItemTotals(inv.items).total;
                         return (
-                          <div key={inv.id} className="rounded-2xl border border-neutral-100 bg-neutral-50 opacity-60 px-3 py-2 flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold', inv.direction === 'receivable' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700')}>
-                                {inv.direction === 'receivable' ? '매출' : '매입'}
-                              </span>
-                              <span className="text-xs text-neutral-500 truncate">
-                                {inv.due_date ? `결제예정 ${inv.due_date}` : inv.date}
-                              </span>
+                          <div key={inv.id} className="rounded-2xl border border-neutral-100 bg-neutral-50 opacity-70">
+                            {/* 접힌 헤더 */}
+                            <div className="flex items-center justify-between gap-2 px-3 py-2">
+                              <button
+                                className="flex items-center gap-2 min-w-0 flex-1 text-left"
+                                onClick={() => setExpandedDoneIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(inv.id)) next.delete(inv.id);
+                                  else next.add(inv.id);
+                                  return next;
+                                })}
+                              >
+                                <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold', inv.direction === 'receivable' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700')}>
+                                  {inv.direction === 'receivable' ? '매출' : '매입'}
+                                </span>
+                                <span className="text-xs text-neutral-500 truncate">
+                                  {invDateStr}{lastPaymentDate ? ` / ${lastPaymentDate}` : ''} | {formatCurrency(doneTotal)}원
+                                </span>
+                                <span className="text-neutral-400 text-xs shrink-0">{isDoneExpanded ? '▲' : '▼'}</span>
+                              </button>
+                              <button
+                                onClick={() => void togglePaymentDone(inv)}
+                                className="shrink-0 rounded-xl border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-600"
+                              >
+                                완료취소
+                              </button>
                             </div>
-                            <button
-                              onClick={() => void togglePaymentDone(inv)}
-                              className="shrink-0 rounded-xl border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-600"
-                            >
-                              완료취소
-                            </button>
+                            {/* 펼쳐진 상세 */}
+                            {isDoneExpanded && (
+                              <div className="border-t border-neutral-200 px-3 pb-3 pt-2 space-y-2">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div>
+                                    <p className="text-xs text-neutral-500">{inv.date}{inv.due_date ? ` → 결제예정 ${inv.due_date}` : ''}</p>
+                                    {inv.note && <p className="text-xs text-blue-600">{inv.note}</p>}
+                                  </div>
+                                </div>
+                                {inv.items.length > 0 && (
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-xs">
+                                      <thead>
+                                        <tr className="text-neutral-400">
+                                          <th className="text-left py-1 pr-2 font-medium">품목</th>
+                                          <th className="text-right py-1 px-1 font-medium">수량</th>
+                                          <th className="text-right py-1 px-1 font-medium">단가</th>
+                                          <th className="text-right py-1 px-1 font-medium">공급가</th>
+                                          <th className="text-right py-1 pl-1 font-medium">세액</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {inv.items.map((item) => (
+                                          <tr key={item.id} className="border-t border-neutral-100">
+                                            <td className="py-1 pr-2 text-neutral-700">{item.item_name || '-'}</td>
+                                            <td className="py-1 px-1 text-right text-neutral-700">{Number(item.quantity).toLocaleString()}</td>
+                                            <td className="py-1 px-1 text-right text-neutral-700">{formatCurrency(item.unit_price)}</td>
+                                            <td className="py-1 px-1 text-right text-neutral-700">{formatCurrency(item.supply_amount)}</td>
+                                            <td className="py-1 pl-1 text-right text-neutral-700">{formatCurrency(item.tax_amount)}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                    <div className="mt-1 text-right text-xs font-bold">총합계: {formatCurrency(doneTotal)}원</div>
+                                  </div>
+                                )}
+                                <div className="flex gap-2">
+                                  <button onClick={() => openEditForm(inv)} className="flex-1 rounded-xl border border-neutral-200 bg-white px-2 py-1.5 text-xs font-semibold text-neutral-700">수정</button>
+                                  <button onClick={() => void handleDelete(inv.id)} disabled={deletingId === inv.id} className="flex-1 rounded-xl border border-red-200 bg-red-50 px-2 py-1.5 text-xs font-semibold text-red-700 disabled:opacity-50">
+                                    {deletingId === inv.id ? '삭제중' : '삭제'}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         );
                       }

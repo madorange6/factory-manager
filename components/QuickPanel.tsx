@@ -727,23 +727,32 @@ export default function QuickPanel({
         {quickPanel.action === '재고' && (
           <div>
             <p className="mb-1 text-xs text-neutral-500">품목</p>
-            <input
-              value={quickPanel.inoutItems[0]?.itemName ?? ''}
-              onChange={(e) => updateInoutItem(0, 'itemName', e.target.value)}
-              placeholder="품목명 입력"
-              className="mb-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
-            />
-            <div className="flex flex-wrap gap-2">
+            <select
+              value={quickPanel.inoutItems[0]?.itemId ?? ''}
+              onChange={(e) => {
+                const val = e.target.value;
+                setQuickPanel((prev) => {
+                  const next = [...prev.inoutItems];
+                  if (val === '') {
+                    next[0] = { ...next[0], itemId: null, itemName: '' };
+                  } else {
+                    const id = Number(val);
+                    const item = inventory.find((i) => i.id === id);
+                    next[0] = { ...next[0], itemId: id, itemName: item?.name ?? '' };
+                  }
+                  return { ...prev, inoutItems: next };
+                });
+                setError('');
+              }}
+              className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+            >
+              <option value="">품목 선택</option>
               {inventory.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => updateInoutItem(0, 'itemId', item.id)}
-                  className={cn('rounded-full border px-3 py-2 text-sm', quickPanel.inoutItems[0]?.itemId === item.id ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50 text-neutral-700')}
-                >
-                  {item.name}
-                </button>
+                <option key={item.id} value={item.id}>
+                  {item.name} ({Number(item.current_stock).toLocaleString()}{item.unit})
+                </option>
               ))}
-            </div>
+            </select>
           </div>
         )}
 

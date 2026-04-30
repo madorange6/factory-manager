@@ -8,6 +8,55 @@ import { cn, getErrorMessage, normalizeCategory } from '../lib/utils';
 const ADMIN_EMAIL = 'sj_advisory@naver.com';
 const CATEGORY_OPTIONS: InventoryCategory[] = ['원료', '분쇄품', '스크랩'];
 
+// 컴포넌트 외부 정의 — StockTab 리렌더링 시 unmount/remount 방지
+function CompanySelector({
+  companyId,
+  companyName,
+  sortedCompanies,
+  companies,
+  onSelectId,
+  onChangeName,
+}: {
+  companyId: number | null;
+  companyName: string;
+  sortedCompanies: Company[];
+  companies: Company[];
+  onSelectId: (id: number | null, name: string) => void;
+  onChangeName: (name: string) => void;
+}) {
+  return (
+    <div>
+      <p className="mb-1 text-xs text-neutral-500">거래처 (선택)</p>
+      {sortedCompanies.length > 0 && (
+        <select
+          value={companyId ?? ''}
+          onChange={(e) => {
+            if (e.target.value === '') {
+              onSelectId(null, '');
+            } else {
+              const id = Number(e.target.value);
+              const company = companies.find((c) => c.id === id);
+              onSelectId(id, company?.name ?? '');
+            }
+          }}
+          className="mb-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+        >
+          <option value="">거래처 없음 / 직접 입력</option>
+          {sortedCompanies.map((c) => (
+            <option key={c.id} value={c.id}>{c.is_favorite ? '⭐ ' : ''}{c.name}</option>
+          ))}
+        </select>
+      )}
+      <input
+        value={companyName}
+        onChange={(e) => onChangeName(e.target.value)}
+        placeholder="또는 거래처명 직접 입력"
+        className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+      />
+    </div>
+  );
+}
+
 type Props = {
   inventory: InventoryItem[];
   profiles: UserProfile[];
@@ -228,51 +277,6 @@ export default function StockTab({
     }
   }
 
-  // 거래처 선택 공통 UI 컴포넌트 (인라인)
-  function CompanySelector({
-    companyId,
-    companyName,
-    onSelectId,
-    onChangeName,
-  }: {
-    companyId: number | null;
-    companyName: string;
-    onSelectId: (id: number | null, name: string) => void;
-    onChangeName: (name: string) => void;
-  }) {
-    return (
-      <div>
-        <p className="mb-1 text-xs text-neutral-500">거래처 (선택)</p>
-        {sortedCompanies.length > 0 && (
-          <select
-            value={companyId ?? ''}
-            onChange={(e) => {
-              if (e.target.value === '') {
-                onSelectId(null, '');
-              } else {
-                const id = Number(e.target.value);
-                const company = companies.find((c) => c.id === id);
-                onSelectId(id, company?.name ?? '');
-              }
-            }}
-            className="mb-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
-          >
-            <option value="">거래처 없음 / 직접 입력</option>
-            {sortedCompanies.map((c) => (
-              <option key={c.id} value={c.id}>{c.is_favorite ? '⭐ ' : ''}{c.name}</option>
-            ))}
-          </select>
-        )}
-        <input
-          value={companyName}
-          onChange={(e) => onChangeName(e.target.value)}
-          placeholder="또는 거래처명 직접 입력"
-          className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="px-3 py-4">
       {errorText && (
@@ -451,6 +455,8 @@ export default function StockTab({
               <CompanySelector
                 companyId={newItemCompanyId}
                 companyName={newItemCompanyName}
+                sortedCompanies={sortedCompanies}
+                companies={companies}
                 onSelectId={(id, name) => { setNewItemCompanyId(id); setNewItemCompanyName(name); }}
                 onChangeName={(name) => { setNewItemCompanyName(name); setNewItemCompanyId(null); }}
               />
@@ -496,6 +502,8 @@ export default function StockTab({
                     <CompanySelector
                       companyId={editingItemCompanyId}
                       companyName={editingItemCompanyName}
+                      sortedCompanies={sortedCompanies}
+                      companies={companies}
                       onSelectId={(id, name) => { setEditingItemCompanyId(id); setEditingItemCompanyName(name); }}
                       onChangeName={(name) => { setEditingItemCompanyName(name); setEditingItemCompanyId(null); }}
                     />
