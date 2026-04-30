@@ -158,13 +158,13 @@ export default function QuickPanel({
     catch (e) { setMessages((prev) => prev.filter((m) => m.id !== temp.id)); throw e; }
   }
 
-  async function insertLog(itemId: number, action: 'in' | 'out', qty: number, note: string | null = null) {
+  async function insertLog(itemId: number, action: 'in' | 'out', qty: number, note: string | null = null, logDate?: string) {
     const { error } = await supabase.from('inventory_logs').insert({
       item_id: itemId,
       action,
       qty,
       note,
-      date: quickPanel.date,
+      date: logDate ?? quickPanel.date,
       user_id: currentUserId,
       user_email: currentUserEmail,
       user_name: currentUserName,
@@ -298,10 +298,10 @@ export default function QuickPanel({
           if (src.itemId === null) continue;
           const srcItem = inventory.find((item) => item.id === src.itemId)!;
           await updateStock(srcItem.id, Number(srcItem.current_stock) - Number(src.bagQty));
-          await insertLog(srcItem.id, 'out', Number(src.bagQty), `production_use:원료생산:${targetItem.name} / ${dateNote}${memoNote}`);
+          await insertLog(srcItem.id, 'out', Number(src.bagQty), `production_use:원료생산:${targetItem.name} / ${dateNote}${memoNote}`, quickPanel.productionEndDate);
         }
         await updateStock(targetItem.id, Number(targetItem.current_stock ?? 0) + targetKgQty);
-        await insertLog(targetItem.id, 'in', targetKgQty, `production_result:원료생산:${sourceNames || '없음'} / ${dateNote}${memoNote}`);
+        await insertLog(targetItem.id, 'in', targetKgQty, `production_result:원료생산:${sourceNames || '없음'} / ${dateNote}${memoNote}`, quickPanel.productionEndDate);
         await saveMsg(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetKgQty}kg 생산 완료.`, 'system');
         if (isNewCompany) {
           setPendingCompanyName(quickPanel.companyName.trim());
@@ -321,10 +321,10 @@ export default function QuickPanel({
           if (src.itemId === null) continue;
           const srcItem = inventory.find((item) => item.id === src.itemId)!;
           await updateStock(srcItem.id, Number(srcItem.current_stock) - Number(src.bagQty));
-          await insertLog(srcItem.id, 'out', Number(src.bagQty), `production_use:분쇄품생산:${targetItem.name} / ${dateNote}${memoNote}`);
+          await insertLog(srcItem.id, 'out', Number(src.bagQty), `production_use:분쇄품생산:${targetItem.name} / ${dateNote}${memoNote}`, quickPanel.productionEndDate);
         }
         await updateStock(targetItem.id, Number(targetItem.current_stock ?? 0) + targetBagQty);
-        await insertLog(targetItem.id, 'in', targetBagQty, `production_result:분쇄품생산:${sourceNames || '없음'} / ${dateNote}${memoNote}`);
+        await insertLog(targetItem.id, 'in', targetBagQty, `production_result:분쇄품생산:${sourceNames || '없음'} / ${dateNote}${memoNote}`, quickPanel.productionEndDate);
         await saveMsg(`${sourceNames || '사용품목 없음'}, ${targetItem.name} ${targetBagQty}bag 생산 완료.`, 'system');
         if (isNewCompany) {
           setPendingCompanyName(quickPanel.companyName.trim());

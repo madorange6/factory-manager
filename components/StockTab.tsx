@@ -34,6 +34,8 @@ export default function StockTab({
   const [manageMode, setManageMode] = useState(false);
   const [stockSearch, setStockSearch] = useState('');
   const [stockCategory, setStockCategory] = useState('원료');
+  const [stockViewMode, setStockViewMode] = useState<'all' | 'company'>('all');
+  const [selectedCompanyFilter, setSelectedCompanyFilter] = useState<string | null>(null);
   const [errorText, setErrorText] = useState('');
 
   // 새 품목 추가
@@ -78,9 +80,23 @@ export default function StockTab({
       const matchesSearch = stockSearch.trim() === '' || item.name.toLowerCase().includes(stockSearch.trim().toLowerCase());
       const itemCategory = normalizeCategory(item.category);
       const matchesCategory = itemCategory === stockCategory;
-      return matchesSearch && matchesCategory;
+      const matchesCompany = stockViewMode === 'all' || !selectedCompanyFilter
+        ? true
+        : item.name.startsWith(selectedCompanyFilter + ' ');
+      return matchesSearch && matchesCategory && matchesCompany;
     });
-  }, [inventory, stockSearch, stockCategory]);
+  }, [inventory, stockSearch, stockCategory, stockViewMode, selectedCompanyFilter]);
+
+  // 품목명에서 거래처명/기본명 분리
+  function splitItemDisplay(name: string): { company: string; baseName: string } {
+    const parts = name.split(' ');
+    if (parts.length <= 1) return { company: '', baseName: name };
+    // 첫 단어가 등록된 거래처명이면 분리, 아니면 전체를 baseName으로
+    const firstWord = parts[0];
+    const isKnownCompany = companies.some((c) => c.name === firstWord);
+    if (isKnownCompany) return { company: firstWord, baseName: parts.slice(1).join(' ') };
+    return { company: '', baseName: name };
+  }
 
   // 거래처명 + 품목명 합치기
   function applyPrefix(company: string, baseName: string): string {
@@ -303,6 +319,44 @@ export default function StockTab({
       {!manageMode && (
         <>
           <div className="mb-3 space-y-2">
+            {/* 전체 / 거래처별 전환 */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setStockViewMode('all'); setSelectedCompanyFilter(null); }}
+                className={cn('flex-1 rounded-2xl border py-2.5 text-sm font-medium', stockViewMode === 'all' ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-600')}
+              >
+                전체
+              </button>
+              <button
+                onClick={() => setStockViewMode('company')}
+                className={cn('flex-1 rounded-2xl border py-2.5 text-sm font-medium', stockViewMode === 'company' ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-600')}
+              >
+                거래처별
+              </button>
+            </div>
+
+            {/* 거래처별: 거래처 선택 목록 */}
+            {stockViewMode === 'company' && (
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                <button
+                  onClick={() => setSelectedCompanyFilter(null)}
+                  className={cn('whitespace-nowrap rounded-full border px-3 py-2 text-sm transition', selectedCompanyFilter === null ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-600')}
+                >
+                  전체
+                </button>
+                {sortedCompanies.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setSelectedCompanyFilter(c.name)}
+                    className={cn('whitespace-nowrap rounded-full border px-3 py-2 text-sm transition', selectedCompanyFilter === c.name ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-600')}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* 카테고리 탭 */}
             <div className="flex gap-2 overflow-x-auto pb-1">
               {stockTabs.map((category) => (
                 <button key={category} onClick={() => setStockCategory(category)} className={cn('whitespace-nowrap rounded-full border px-3 py-2 text-sm transition', stockCategory === category ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-600')}>
@@ -317,24 +371,34 @@ export default function StockTab({
             {filteredStock.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-neutral-300 bg-white px-4 py-8 text-center text-sm text-neutral-500">표시할 품목이 없어.</div>
             ) : (
-              filteredStock.map((item) => (
-                <div key={item.id} className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-base font-semibold">{item.name}</p>
-                      <p className="mt-1 text-xs text-neutral-500">{normalizeCategory(item.category)}</p>
-                      {item.memo && <p className="mt-1 text-xs text-blue-500">{item.memo}</p>}
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <p className="text-lg font-bold tracking-tight">
-                        {Number(item.current_stock).toLocaleString()}
-                        <span className="ml-1 text-sm font-medium text-neutral-500">{item.unit}</span>
-                      </p>
-                      <p className="mt-1 text-[11px] text-neutral-400">현재 재고</p>
+              filteredStock.map((item) => {
+                const { company, baseName } = splitItemDisplay(item.name);
+                return (
+                  <div key={item.id} className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        {company ? (
+                          <>
+                            <p className="text-xs text-neutral-400 font-medium">{company}</p>
+                            <p className="truncate text-base font-semibold">{baseName}</p>
+                          </>
+                        ) : (
+                          <p className="truncate text-base font-semibold">{item.name}</p>
+                        )}
+                        <p className="mt-1 text-xs text-neutral-500">{normalizeCategory(item.category)}</p>
+                        {item.memo && <p className="mt-1 text-xs text-blue-500">{item.memo}</p>}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-lg font-bold tracking-tight">
+                          {Number(item.current_stock).toLocaleString()}
+                          <span className="ml-1 text-sm font-medium text-neutral-500">{item.unit}</span>
+                        </p>
+                        <p className="mt-1 text-[11px] text-neutral-400">현재 재고</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </>

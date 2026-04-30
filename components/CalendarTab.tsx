@@ -3,12 +3,14 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase/client';
 import { Company, InventoryItem, InventoryLogRow } from '../lib/types';
-import { cn, formatDateTime, getErrorMessage } from '../lib/utils';
+import { cn, formatDateTime, getErrorMessage, todayString } from '../lib/utils';
 
 type Props = {
   logs: InventoryLogRow[];
   inventory: InventoryItem[];
   companies: Company[];
+  onRefreshLogs: () => Promise<void>;
+  onRefreshInventory: () => Promise<void>;
 };
 
 type SettlementModal = {
@@ -29,6 +31,32 @@ const EMPTY_MODAL: SettlementModal = {
   error: '',
 };
 
+type EditLogModal = {
+  open: boolean;
+  log: InventoryLogRow | null;
+  date: string;
+  companyId: number | null;
+  companyName: string;
+  itemId: number | null;
+  qty: string;
+  note: string;
+  saving: boolean;
+  error: string;
+};
+
+const EMPTY_EDIT_MODAL: EditLogModal = {
+  open: false,
+  log: null,
+  date: todayString(),
+  companyId: null,
+  companyName: '',
+  itemId: null,
+  qty: '',
+  note: '',
+  saving: false,
+  error: '',
+};
+
 // 생산 로그 여부 판단
 function isProductionLog(log: InventoryLogRow): boolean {
   if (!log.note) return false;
@@ -42,12 +70,14 @@ function logDateKey(log: InventoryLogRow): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export default function CalendarTab({ logs, inventory, companies }: Props) {
+export default function CalendarTab({ logs, inventory, companies, onRefreshLogs, onRefreshInventory }: Props) {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [modal, setModal] = useState<SettlementModal>(EMPTY_MODAL);
+  const [editModal, setEditModal] = useState<EditLogModal>(EMPTY_EDIT_MODAL);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   // 메모 인라인 편집
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
@@ -177,7 +207,6 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
         .update({ note: editingNoteValue || null })
         .eq('id', logId);
       if (error) throw error;
-      // 로컬 갱신 (부모에서 다시 fetch 안 하므로 직접 mutate)
       const log = logs.find((l) => l.id === logId);
       if (log) log.note = editingNoteValue || null;
       setEditingNoteId(null);
@@ -185,6 +214,117 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
       alert(getErrorMessage(error));
     } finally {
       setSavingNoteId(null);
+    }
+  }
+
+  // 수정 모달 열기
+  function openEditModal(log: InventoryLogRow) {
+    setEditModal({
+      open: true,
+      log,
+      date: log.date ?? logDateKey(log),
+      companyId: log.company_id ?? null,
+      companyName: log.company_name ?? '',
+      itemId: log.item_id,
+      qty: String(log.qty),
+      note: log.note ?? '',
+      saving: false,
+      error: '',
+    });
+  }
+
+  // 수정 저장
+  async function handleEditSave() {
+    if (!editModal.log) return;
+    const newQty = Number(editModal.qty);
+    if (!Number.isFinite(newQty) || newQty <= 0) {
+      setEditModal((prev) => ({ ...prev, error: '수량을 올바르게 입력해줘.' }));
+      return;
+    }
+    if (!editModal.itemId) {
+      setEditModal((prev) => ({ ...prev, error: '품목을 선택해줘.' }));
+      return;
+    }
+
+    const log = editModal.log;
+    const oldQty = Number(log.qty);
+    const oldItemId = log.item_id;
+    const newItemId = editModal.itemId;
+    const action = log.action;
+
+    try {
+      setEditModal((prev) => ({ ...prev, saving: true, error: '' }));
+
+      // 재고 재계산
+      if (oldItemId === newItemId) {
+        // 같은 품목: 수량 차이만 반영
+        const item = inventoryMap.get(oldItemId);
+        if (item) {
+          const netDelta = action === 'in' ? (newQty - oldQty) : (oldQty - newQty);
+          const newStock = Number(item.current_stock) + netDelta;
+          const { error: stockErr } = await supabase.from('inventory_items').update({ current_stock: newStock }).eq('id', oldItemId);
+          if (stockErr) throw stockErr;
+        }
+      } else {
+        // 다른 품목: 기존 품목 복구 + 새 품목 적용
+        const oldItem = inventoryMap.get(oldItemId);
+        const newItem = inventoryMap.get(newItemId);
+        if (oldItem) {
+          const revertedStock = Number(oldItem.current_stock) + (action === 'in' ? -oldQty : oldQty);
+          const { error: e1 } = await supabase.from('inventory_items').update({ current_stock: revertedStock }).eq('id', oldItemId);
+          if (e1) throw e1;
+        }
+        if (newItem) {
+          const appliedStock = Number(newItem.current_stock) + (action === 'in' ? newQty : -newQty);
+          const { error: e2 } = await supabase.from('inventory_items').update({ current_stock: appliedStock }).eq('id', newItemId);
+          if (e2) throw e2;
+        }
+      }
+
+      // 로그 업데이트
+      const companyId = editModal.companyId
+        ?? companies.find((c) => c.name === editModal.companyName.trim())?.id
+        ?? null;
+      const { error: logErr } = await supabase.from('inventory_logs').update({
+        date: editModal.date || null,
+        company_id: companyId,
+        company_name: editModal.companyName.trim() || null,
+        item_id: newItemId,
+        qty: newQty,
+        note: editModal.note.trim() || null,
+      }).eq('id', log.id);
+      if (logErr) throw logErr;
+
+      setEditModal(EMPTY_EDIT_MODAL);
+      await onRefreshLogs();
+      await onRefreshInventory();
+    } catch (error) {
+      setEditModal((prev) => ({ ...prev, saving: false, error: getErrorMessage(error) }));
+    }
+  }
+
+  // 삭제
+  async function handleDeleteLog(log: InventoryLogRow) {
+    if (!window.confirm('이 입출고 내역을 삭제할까요? 재고도 자동으로 복구돼.')) return;
+    try {
+      setDeletingId(log.id);
+      // 재고 복구
+      const item = inventoryMap.get(log.item_id);
+      if (item) {
+        const restoredStock = Number(item.current_stock) + (log.action === 'in' ? -Number(log.qty) : Number(log.qty));
+        const { error: stockErr } = await supabase.from('inventory_items').update({ current_stock: restoredStock }).eq('id', log.item_id);
+        if (stockErr) throw stockErr;
+      }
+      // 로그 삭제
+      const { error } = await supabase.from('inventory_logs').delete().eq('id', log.id);
+      if (error) throw error;
+
+      await onRefreshLogs();
+      await onRefreshInventory();
+    } catch (error) {
+      alert(getErrorMessage(error));
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -270,12 +410,12 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
 
                 return (
                   <div key={log.id} className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm">
-                    {/* 상단: 회사명 + 배지 + 정산버튼 */}
+                    {/* 상단: 회사명 + 배지 + 정산/수정/삭제 버튼 */}
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <p className="text-base font-bold truncate flex-1">
                         {log.company_name || '거래처 없음'}
                       </p>
-                      <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
                         {isProd ? (
                           <span className="rounded-full px-2.5 py-1 text-xs font-semibold bg-orange-50 text-orange-600">
                             생산
@@ -293,6 +433,19 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
                             정산
                           </button>
                         )}
+                        <button
+                          onClick={() => openEditModal(log)}
+                          className="rounded-full border border-neutral-300 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+                        >
+                          수정
+                        </button>
+                        <button
+                          onClick={() => void handleDeleteLog(log)}
+                          disabled={deletingId === log.id}
+                          className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50"
+                        >
+                          {deletingId === log.id ? '삭제중' : '삭제'}
+                        </button>
                       </div>
                     </div>
 
@@ -438,6 +591,105 @@ export default function CalendarTab({ logs, inventory, companies }: Props) {
                 className="w-full rounded-2xl bg-neutral-900 px-4 py-4 text-sm font-semibold text-white disabled:opacity-50"
               >
                 {modal.saving ? '저장중' : '정산 저장'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 수정 모달 */}
+      {editModal.open && editModal.log && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setEditModal(EMPTY_EDIT_MODAL)}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-10 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-base font-bold">입출고 수정</p>
+              <button onClick={() => setEditModal(EMPTY_EDIT_MODAL)} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <p className="mb-1 text-xs text-neutral-500">날짜</p>
+                <input
+                  type="date"
+                  value={editModal.date}
+                  onChange={(e) => setEditModal((prev) => ({ ...prev, date: e.target.value }))}
+                  className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                />
+              </div>
+
+              <div>
+                <p className="mb-1 text-xs text-neutral-500">거래처</p>
+                <select
+                  value={editModal.companyId ?? ''}
+                  onChange={(e) => {
+                    if (e.target.value === '') {
+                      setEditModal((prev) => ({ ...prev, companyId: null, companyName: '' }));
+                    } else {
+                      const id = Number(e.target.value);
+                      const company = companies.find((c) => c.id === id);
+                      setEditModal((prev) => ({ ...prev, companyId: id, companyName: company?.name ?? '' }));
+                    }
+                  }}
+                  className="mb-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                >
+                  <option value="">직접 입력</option>
+                  {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <input
+                  value={editModal.companyName}
+                  onChange={(e) => setEditModal((prev) => ({ ...prev, companyName: e.target.value, companyId: null }))}
+                  placeholder="거래처명 직접 입력"
+                  className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+                />
+              </div>
+
+              <div>
+                <p className="mb-1 text-xs text-neutral-500">품목</p>
+                <select
+                  value={editModal.itemId ?? ''}
+                  onChange={(e) => setEditModal((prev) => ({ ...prev, itemId: e.target.value ? Number(e.target.value) : null }))}
+                  className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                >
+                  <option value="">품목 선택</option>
+                  {inventory.map((item) => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <p className="mb-1 text-xs text-neutral-500">수량</p>
+                <input
+                  type="number"
+                  value={editModal.qty}
+                  onChange={(e) => setEditModal((prev) => ({ ...prev, qty: e.target.value }))}
+                  placeholder="수량"
+                  inputMode="decimal"
+                  className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                />
+              </div>
+
+              <div>
+                <p className="mb-1 text-xs text-neutral-500">메모</p>
+                <input
+                  type="text"
+                  value={editModal.note}
+                  onChange={(e) => setEditModal((prev) => ({ ...prev, note: e.target.value }))}
+                  placeholder="메모 (선택)"
+                  className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+                />
+              </div>
+
+              {editModal.error && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{editModal.error}</div>
+              )}
+
+              <button
+                onClick={() => void handleEditSave()}
+                disabled={editModal.saving}
+                className="w-full rounded-2xl bg-neutral-900 px-4 py-4 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {editModal.saving ? '저장중' : '수정 저장'}
               </button>
             </div>
           </div>

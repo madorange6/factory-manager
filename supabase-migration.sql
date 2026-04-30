@@ -54,6 +54,13 @@ alter table inventory_logs add column if not exists date date;
 alter table invoices add column if not exists factory text check (factory in ('1공장', '2공장')) default null;
 
 -- =============================================
+-- 3차 마이그레이션 (7차 수정)
+-- =============================================
+
+-- invoices에 due_date 컬럼 추가 (결제 예정일)
+alter table invoices add column if not exists due_date date;
+
+-- =============================================
 -- RLS 설정 (필요시)
 -- =============================================
 -- alter table companies enable row level security;

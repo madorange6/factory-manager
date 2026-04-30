@@ -10,6 +10,7 @@ import ChatTab from '../components/ChatTab';
 import CalendarTab from '../components/CalendarTab';
 import StockTab from '../components/StockTab';
 import SettlementTab from '../components/SettlementTab';
+import FinanceCalendarTab from '../components/FinanceCalendarTab';
 import QuickPanel, { EMPTY_PANEL } from '../components/QuickPanel';
 
 const ADMIN_EMAIL = 'sj_advisory@naver.com';
@@ -141,6 +142,7 @@ export default function Page() {
     { key: 'calendar', icon: '📦', label: '입출고' },
     { key: 'stock', icon: '📊', label: '재고' },
     ...(canViewFinance ? [{ key: 'settlement' as TabKey, icon: '🧾', label: '정산' }] : []),
+    ...(canViewFinance ? [{ key: 'finance-calendar' as TabKey, icon: '📅', label: '정산달력' }] : []),
   ];
 
   const TAB_TITLE: Record<TabKey, string> = {
@@ -148,6 +150,7 @@ export default function Page() {
     calendar: '입출고',
     stock: '재고',
     settlement: '정산',
+    'finance-calendar': '정산달력',
   };
 
   if (checkingAuth) return null;
@@ -197,6 +200,8 @@ export default function Page() {
                   logs={logs}
                   inventory={inventory}
                   companies={companies}
+                  onRefreshLogs={fetchLogs}
+                  onRefreshInventory={fetchInventory}
                 />
               )}
               {activeTab === 'stock' && (
@@ -214,6 +219,9 @@ export default function Page() {
               )}
               {activeTab === 'settlement' && canViewFinance && (
                 <SettlementTab companies={companies} />
+              )}
+              {activeTab === 'finance-calendar' && canViewFinance && (
+                <FinanceCalendarTab />
               )}
             </>
           )}
@@ -242,7 +250,7 @@ export default function Page() {
 
         {/* 하단 탭 네비게이션 */}
         <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-md -translate-x-1/2 border-t border-neutral-200 bg-white/95 pb-[calc(env(safe-area-inset-bottom)+8px)] pt-2 backdrop-blur">
-          <div className={cn('grid gap-1 px-2', TAB_ITEMS.length === 4 ? 'grid-cols-4' : 'grid-cols-3')}>
+          <div className={cn('grid gap-1 px-2', TAB_ITEMS.length === 5 ? 'grid-cols-5' : TAB_ITEMS.length === 4 ? 'grid-cols-4' : 'grid-cols-3')}>
             {TAB_ITEMS.map(({ key, icon, label }) => (
               <button
                 key={key}

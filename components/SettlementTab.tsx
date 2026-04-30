@@ -69,11 +69,13 @@ export default function SettlementTab({ companies }: Props) {
   const [editingInvoiceId, setEditingInvoiceId] = useState<number | null>(null);
 
   const [formDate, setFormDate] = useState(todayString());
+  const [formDueDate, setFormDueDate] = useState('');
   const [formCompanyId, setFormCompanyId] = useState<number | null>(null);
   const [formCompanyName, setFormCompanyName] = useState('');
   const [formDirection, setFormDirection] = useState<'receivable' | 'payable'>('receivable');
   const [formNote, setFormNote] = useState('');
   const [formFactory, setFormFactory] = useState<string | null>(null);
+  const [formInvoiceIssued, setFormInvoiceIssued] = useState(false);
   const [formItems, setFormItems] = useState<InvoiceItemDraft[]>([{ ...EMPTY_ITEM_DRAFT }]);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -187,11 +189,13 @@ export default function SettlementTab({ companies }: Props) {
   function openNewForm() {
     setEditingInvoiceId(null);
     setFormDate(todayString());
+    setFormDueDate('');
     setFormCompanyId(null);
     setFormCompanyName('');
     setFormDirection('receivable');
     setFormNote('');
     setFormFactory(null);
+    setFormInvoiceIssued(false);
     setFormItems([{ ...EMPTY_ITEM_DRAFT }]);
     setShowForm(true);
   }
@@ -199,11 +203,13 @@ export default function SettlementTab({ companies }: Props) {
   function openEditForm(inv: InvoiceWithItems) {
     setEditingInvoiceId(inv.id);
     setFormDate(inv.date);
+    setFormDueDate(inv.due_date ?? '');
     setFormCompanyId(inv.company_id ?? null);
     setFormCompanyName(inv.company_name);
     setFormDirection(inv.direction);
     setFormNote(inv.note ?? '');
     setFormFactory(inv.factory ?? null);
+    setFormInvoiceIssued(inv.invoice_issued ?? false);
     setFormItems(inv.items.map((item) => ({
       item_name: item.item_name ?? '',
       quantity: String(item.quantity),
@@ -227,7 +233,8 @@ export default function SettlementTab({ companies }: Props) {
         company_name: companyName,
         direction: formDirection,
         date: formDate,
-        invoice_issued: formFactory !== null,
+        due_date: formDueDate.trim() || null,
+        invoice_issued: formInvoiceIssued,
         factory: formFactory,
         note: formNote.trim() || null,
       };
@@ -289,9 +296,29 @@ export default function SettlementTab({ companies }: Props) {
 
   async function setFactory(inv: InvoiceWithItems, factory: string | null) {
     try {
-      const { error } = await supabase.from('invoices').update({ factory, invoice_issued: factory !== null }).eq('id', inv.id);
+      const { error } = await supabase.from('invoices').update({ factory }).eq('id', inv.id);
       if (error) throw error;
-      setInvoices((prev) => prev.map((i) => i.id === inv.id ? { ...i, factory, invoice_issued: factory !== null } : i));
+      setInvoices((prev) => prev.map((i) => i.id === inv.id ? { ...i, factory } : i));
+    } catch (error) {
+      setErrorText(getErrorMessage(error));
+    }
+  }
+
+  async function toggleInvoiceIssued(inv: InvoiceWithItems) {
+    try {
+      const { error } = await supabase.from('invoices').update({ invoice_issued: !inv.invoice_issued }).eq('id', inv.id);
+      if (error) throw error;
+      setInvoices((prev) => prev.map((i) => i.id === inv.id ? { ...i, invoice_issued: !inv.invoice_issued } : i));
+    } catch (error) {
+      setErrorText(getErrorMessage(error));
+    }
+  }
+
+  async function setDueDate(inv: InvoiceWithItems, due_date: string | null) {
+    try {
+      const { error } = await supabase.from('invoices').update({ due_date }).eq('id', inv.id);
+      if (error) throw error;
+      setInvoices((prev) => prev.map((i) => i.id === inv.id ? { ...i, due_date } : i));
     } catch (error) {
       setErrorText(getErrorMessage(error));
     }
@@ -446,7 +473,20 @@ export default function SettlementTab({ companies }: Props) {
               </div>
             </div>
             <div>
-              <p className="mb-1 text-xs text-neutral-500">계산서 발행</p>
+              <p className="mb-1 text-xs text-neutral-500">결제 예정일 (선택)</p>
+              <input type="date" value={formDueDate} onChange={(e) => setFormDueDate(e.target.value)} className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400" />
+            </div>
+            <div>
+              <p className="mb-1 text-xs text-neutral-500">계산서 발행 여부</p>
+              <button
+                onClick={() => setFormInvoiceIssued((prev) => !prev)}
+                className={cn('w-full rounded-2xl border py-3 text-sm font-semibold', formInvoiceIssued ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-neutral-200 bg-white text-neutral-700')}
+              >
+                {formInvoiceIssued ? '✅ 발행됨' : '❌ 미발행'}
+              </button>
+            </div>
+            <div>
+              <p className="mb-1 text-xs text-neutral-500">공장</p>
               <div className="grid grid-cols-3 gap-2">
                 {([null, '1공장', '2공장'] as const).map((val) => (
                   <button
@@ -454,7 +494,7 @@ export default function SettlementTab({ companies }: Props) {
                     onClick={() => setFormFactory(val)}
                     className={cn('rounded-2xl border py-2.5 text-sm font-medium', formFactory === val ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-700')}
                   >
-                    {val === null ? '미발행' : val}
+                    {val === null ? '없음' : val}
                   </button>
                 ))}
               </div>
@@ -627,7 +667,7 @@ export default function SettlementTab({ companies }: Props) {
                         <div key={inv.id} className={cn('rounded-2xl border p-3', inv.payment_done ? 'border-neutral-100 opacity-60' : 'border-neutral-200')}>
                           <div className="flex items-start justify-between gap-2 mb-2">
                             <div>
-                              <p className="text-xs text-neutral-500">{inv.date}</p>
+                              <p className="text-xs text-neutral-500">{inv.date}{inv.due_date ? ` → 결제예정 ${inv.due_date}` : ''}</p>
                               {inv.note && <p className="text-xs text-blue-600">{inv.note}</p>}
                             </div>
                             <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold', inv.direction === 'receivable' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700')}>
@@ -720,7 +760,26 @@ export default function SettlementTab({ companies }: Props) {
                             + {inv.direction === 'receivable' ? '입금내역' : '지급내역'} 추가
                           </button>
 
-                          {/* 계산서 발행 (공장 선택) */}
+                          {/* 결제 예정일 */}
+                          <div className="mb-2 flex items-center gap-2">
+                            <p className="text-xs text-neutral-400 shrink-0">결제예정일</p>
+                            <input
+                              type="date"
+                              value={inv.due_date ?? ''}
+                              onChange={(e) => void setDueDate(inv, e.target.value || null)}
+                              className="flex-1 rounded-xl border border-neutral-200 bg-white px-2 py-1 text-xs outline-none focus:border-neutral-400"
+                            />
+                          </div>
+
+                          {/* 계산서 발행 여부 (독립 체크박스) */}
+                          <button
+                            onClick={() => void toggleInvoiceIssued(inv)}
+                            className={cn('w-full mb-2 rounded-xl border py-1.5 text-xs font-semibold transition', inv.invoice_issued ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-neutral-200 bg-white text-neutral-600')}
+                          >
+                            계산서 {inv.invoice_issued ? '✅ 발행됨' : '❌ 미발행'}
+                          </button>
+
+                          {/* 공장 선택 (독립) */}
                           <div className="mb-2 grid grid-cols-3 gap-1">
                             {([null, '1공장', '2공장'] as const).map((val) => (
                               <button
@@ -728,7 +787,7 @@ export default function SettlementTab({ companies }: Props) {
                                 onClick={() => void setFactory(inv, val)}
                                 className={cn('rounded-xl border py-1.5 text-xs font-medium', (inv.factory ?? null) === val ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50 text-neutral-600')}
                               >
-                                {val === null ? '미발행' : val}
+                                {val === null ? '없음' : val}
                               </button>
                             ))}
                           </div>

@@ -1,4 +1,4 @@
-export type TabKey = 'chat' | 'calendar' | 'stock' | 'settlement';
+export type TabKey = 'chat' | 'calendar' | 'stock' | 'settlement' | 'finance-calendar';
 export type MessageType = 'chat' | 'command' | 'system';
 export type InventoryCategory = '원료' | '분쇄품' | '스크랩';
 export type QuickAction = '재고' | '입고' | '출고' | '생산';
@@ -77,6 +77,7 @@ export type Invoice = {
   company_name: string;
   direction: 'receivable' | 'payable';
   date: string;
+  due_date?: string | null;
   invoice_issued: boolean;
   payment_done: boolean;
   factory?: string | null;
