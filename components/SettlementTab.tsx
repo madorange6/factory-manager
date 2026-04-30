@@ -669,6 +669,18 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
               return s + Math.max(0, total - paid);
             }, 0);
             const hasPending = pendingCount > 0;
+            // 상태 표시 색상: receivable=초록, payable=주황, 둘 다=금액 큰 쪽
+            const pendingReceivableAmt = pendingInvoices
+              .filter((inv) => inv.direction === 'receivable')
+              .reduce((s, inv) => s + Math.max(0, calcItemTotals(inv.items).total - calcPaid(inv.payments)), 0);
+            const pendingPayableAmt = pendingInvoices
+              .filter((inv) => inv.direction === 'payable')
+              .reduce((s, inv) => s + Math.max(0, calcItemTotals(inv.items).total - calcPaid(inv.payments)), 0);
+            const indicatorColor = (pendingReceivableAmt > 0 && pendingPayableAmt > 0)
+              ? (pendingReceivableAmt >= pendingPayableAmt ? 'bg-emerald-500' : 'bg-orange-500')
+              : pendingReceivableAmt > 0 ? 'bg-emerald-500'
+              : pendingPayableAmt > 0 ? 'bg-orange-500'
+              : 'bg-neutral-300';
 
             return (
               <div key={companyName} className="rounded-3xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
@@ -676,14 +688,22 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
                   onClick={() => toggleGroup(companyName)}
                   className="w-full flex items-center justify-between px-4 py-4 text-left"
                 >
-                  <div className="flex items-center gap-2 min-w-0">
-                    {hasPending && <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" />}
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className={cn(
+                      'w-3.5 h-3.5 rounded-full border-2 shrink-0',
+                      hasPending ? `${indicatorColor} border-transparent` : 'bg-white border-neutral-300'
+                    )} />
                     <p className="font-semibold truncate">{companyName}</p>
                     {pendingCount > 0 && (
-                      <span className="text-xs text-neutral-400 shrink-0">{pendingCount}건 · {formatCurrency(pendingAmount)}원</span>
+                      <span className="text-xs text-neutral-400 shrink-0">{pendingCount}건</span>
                     )}
                   </div>
-                  <span className="text-neutral-400 text-sm shrink-0">{isExpanded ? '▲' : '▼'}</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {pendingCount > 0 && (
+                      <span className="text-sm font-bold text-neutral-700">{formatCurrency(pendingAmount)}원</span>
+                    )}
+                    <span className="text-neutral-400 text-sm">{isExpanded ? '▲' : '▼'}</span>
+                  </div>
                 </button>
 
                 {isExpanded && (

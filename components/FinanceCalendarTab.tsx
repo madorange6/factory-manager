@@ -184,9 +184,14 @@ export default function FinanceCalendarTab() {
             const payableSum = selectedInvoices
               .filter((inv) => inv.direction === 'payable')
               .reduce((s, inv) => s + Math.max(0, calcTotal(inv.items) - calcPaid(inv.payments)), 0);
-            const allSum = receivableSum + payableSum;
-            const displaySum = invoiceFilter === 'receivable' ? receivableSum : invoiceFilter === 'payable' ? payableSum : allSum;
+            const netSum = receivableSum - payableSum; // 전체: 미수금 - 미지급
             const displayLabel = invoiceFilter === 'receivable' ? '미수금 합계' : invoiceFilter === 'payable' ? '미지급 합계' : '합계';
+            const displayValue = invoiceFilter === 'receivable'
+              ? `${formatCurrency(receivableSum)}원`
+              : invoiceFilter === 'payable'
+              ? `-${formatCurrency(payableSum)}원`
+              : `${netSum < 0 ? '-' : ''}${formatCurrency(Math.abs(netSum))}원`;
+            const displayColor = invoiceFilter === 'payable' || netSum < 0 ? 'text-orange-600' : 'text-neutral-800';
             return (
               <>
                 <div className="mb-2 flex gap-2">
@@ -202,7 +207,7 @@ export default function FinanceCalendarTab() {
                 </div>
                 <div className="mb-3 rounded-2xl border border-neutral-100 bg-neutral-50 px-4 py-2 text-sm">
                   <span className="text-neutral-500">{displayLabel}: </span>
-                  <span className="font-bold text-neutral-800">{formatCurrency(displaySum)}원</span>
+                  <span className={cn('font-bold', displayColor)}>{displayValue}</span>
                 </div>
               </>
             );
@@ -256,7 +261,9 @@ export default function FinanceCalendarTab() {
                           {inv.direction === 'receivable' ? '미수금' : '미지급금'}
                         </span>
                         <span className={cn('font-bold', remaining > 0 ? 'text-orange-600' : 'text-emerald-600')}>
-                          {remaining > 0 ? `${formatCurrency(remaining)}원` : '완납'}
+                          {remaining > 0
+                            ? `${inv.direction === 'payable' ? '-' : ''}${formatCurrency(remaining)}원`
+                            : '완납'}
                         </span>
                       </div>
                     </div>
