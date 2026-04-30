@@ -7,6 +7,7 @@ import { cn, formatCurrency, getErrorMessage } from '../lib/utils';
 
 type InvoiceWithDetails = Invoice & { items: InvoiceItem[]; payments: Payment[] };
 type FactoryFilter = 'all' | '1공장' | '2공장';
+type InvoiceTypeFilter = 'all' | 'receivable' | 'payable';
 
 function calcTotal(items: InvoiceItem[]) {
   return items.reduce((s, i) => s + Number(i.supply_amount) + Number(i.tax_amount), 0);
@@ -22,6 +23,7 @@ export default function FinanceCalendarTab() {
   const [month, setMonth] = useState(today.getMonth());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [factoryFilter, setFactoryFilter] = useState<FactoryFilter>('all');
+  const [invoiceFilter, setInvoiceFilter] = useState<InvoiceTypeFilter>('all');
 
   const [invoices, setInvoices] = useState<InvoiceWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
@@ -174,13 +176,55 @@ export default function FinanceCalendarTab() {
             {selectedDate.replace(/-/g, '/')} 결제 예정 내역
           </p>
 
+          {/* [전체][미수금][미지급] 탭 */}
+          {selectedInvoices.length > 0 && (() => {
+            const receivableSum = selectedInvoices
+              .filter((inv) => inv.direction === 'receivable')
+              .reduce((s, inv) => s + Math.max(0, calcTotal(inv.items) - calcPaid(inv.payments)), 0);
+            const payableSum = selectedInvoices
+              .filter((inv) => inv.direction === 'payable')
+              .reduce((s, inv) => s + Math.max(0, calcTotal(inv.items) - calcPaid(inv.payments)), 0);
+            const allSum = receivableSum + payableSum;
+            const displaySum = invoiceFilter === 'receivable' ? receivableSum : invoiceFilter === 'payable' ? payableSum : allSum;
+            const displayLabel = invoiceFilter === 'receivable' ? '미수금 합계' : invoiceFilter === 'payable' ? '미지급 합계' : '합계';
+            return (
+              <>
+                <div className="mb-2 flex gap-2">
+                  {([['all', '전체'], ['receivable', '미수금'], ['payable', '미지급']] as [InvoiceTypeFilter, string][]).map(([val, label]) => (
+                    <button
+                      key={val}
+                      onClick={() => setInvoiceFilter(val)}
+                      className={cn('flex-1 rounded-2xl border py-2 text-xs font-semibold', invoiceFilter === val ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-600')}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mb-3 rounded-2xl border border-neutral-100 bg-neutral-50 px-4 py-2 text-sm">
+                  <span className="text-neutral-500">{displayLabel}: </span>
+                  <span className="font-bold text-neutral-800">{formatCurrency(displaySum)}원</span>
+                </div>
+              </>
+            );
+          })()}
+
           {selectedInvoices.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-neutral-300 bg-white px-4 py-6 text-center text-sm text-neutral-500">
               이 날 결제 예정 내역이 없어.
             </div>
-          ) : (
+          ) : (() => {
+            const displayInvoices = selectedInvoices.filter((inv) => {
+              if (invoiceFilter === 'receivable') return inv.direction === 'receivable';
+              if (invoiceFilter === 'payable') return inv.direction === 'payable';
+              return true;
+            });
+            return displayInvoices.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-neutral-300 bg-white px-4 py-6 text-center text-sm text-neutral-500">
+                해당 항목이 없어.
+              </div>
+            ) : (
             <div className="space-y-3">
-              {selectedInvoices.map((inv) => {
+              {displayInvoices.map((inv) => {
                 const total = calcTotal(inv.items);
                 const paid = calcPaid(inv.payments);
                 const remaining = Math.max(0, total - paid);
@@ -228,7 +272,8 @@ export default function FinanceCalendarTab() {
                 );
               })}
             </div>
-          )}
+            );
+          })()}
         </div>
       )}
     </div>

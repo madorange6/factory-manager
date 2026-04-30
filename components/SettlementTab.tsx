@@ -7,6 +7,7 @@ import { cn, formatCurrency, getErrorMessage, todayString } from '../lib/utils';
 
 type Props = {
   companies: Company[];
+  onCompanyAdded: () => Promise<void>;
 };
 
 type InvoiceWithItems = Invoice & { items: InvoiceItem[]; payments: Payment[] };
@@ -53,7 +54,7 @@ const EMPTY_PAYMENT_MODAL: PaymentModal = {
   error: '',
 };
 
-export default function SettlementTab({ companies }: Props) {
+export default function SettlementTab({ companies, onCompanyAdded }: Props) {
   const [invoices, setInvoices] = useState<InvoiceWithItems[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorText, setErrorText] = useState('');
@@ -81,6 +82,9 @@ export default function SettlementTab({ companies }: Props) {
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
   const [paymentModal, setPaymentModal] = useState<PaymentModal>(EMPTY_PAYMENT_MODAL);
+
+  const [pendingCompanyName, setPendingCompanyName] = useState<string | null>(null);
+  const [addingCompany, setAddingCompany] = useState(false);
 
   useEffect(() => { void fetchInvoices(); }, []);
 
@@ -151,7 +155,11 @@ export default function SettlementTab({ companies }: Props) {
     groupMap.get(inv.company_name)!.push(inv);
   }
   for (const [, invs] of groupMap) {
-    invs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    invs.sort((a, b) => {
+      if (a.payment_done && !b.payment_done) return 1;
+      if (!a.payment_done && b.payment_done) return -1;
+      return new Date(a.date).getTime() - new Date(b.date).getTime();
+    });
   }
   const sortedGroupKeys = Array.from(groupMap.keys()).sort((a, b) => a.localeCompare(b, 'ko'));
 
@@ -277,6 +285,9 @@ export default function SettlementTab({ companies }: Props) {
       setShowForm(false);
       setEditingInvoiceId(null);
       await fetchInvoices();
+      // C안: 새 거래처면 목록 추가 제안
+      const isNewCompany = !formCompanyId && !companies.find((c) => c.name.toLowerCase() === companyName.toLowerCase());
+      if (isNewCompany) setPendingCompanyName(companyName);
     } catch (error) {
       setErrorText(getErrorMessage(error));
     } finally {
@@ -321,6 +332,20 @@ export default function SettlementTab({ companies }: Props) {
       setInvoices((prev) => prev.map((i) => i.id === inv.id ? { ...i, due_date } : i));
     } catch (error) {
       setErrorText(getErrorMessage(error));
+    }
+  }
+
+  async function handleAddCompany(name: string) {
+    try {
+      setAddingCompany(true);
+      const { error } = await supabase.from('companies').insert({ name, is_favorite: false });
+      if (error) throw error;
+      await onCompanyAdded();
+    } catch (e) {
+      setErrorText(getErrorMessage(e));
+    } finally {
+      setAddingCompany(false);
+      setPendingCompanyName(null);
     }
   }
 
@@ -647,7 +672,6 @@ export default function SettlementTab({ companies }: Props) {
                   <div className="flex items-center gap-2 min-w-0">
                     {hasPending && <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" />}
                     <p className="font-semibold truncate">{companyName}</p>
-                    <span className="text-xs text-neutral-400 shrink-0">{groupInvoices.length}건</span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-sm font-bold text-neutral-700">{formatCurrency(groupTotal)}원</span>
@@ -663,8 +687,30 @@ export default function SettlementTab({ companies }: Props) {
                       const remaining = Math.max(0, totals.total - paid);
                       const sortedPayments = [...inv.payments].sort((a, b) => a.date.localeCompare(b.date));
 
+                      // 완료 항목: 접힌 형태로 날짜만 표시
+                      if (inv.payment_done) {
+                        return (
+                          <div key={inv.id} className="rounded-2xl border border-neutral-100 bg-neutral-50 opacity-60 px-3 py-2 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold', inv.direction === 'receivable' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700')}>
+                                {inv.direction === 'receivable' ? '매출' : '매입'}
+                              </span>
+                              <span className="text-xs text-neutral-500 truncate">
+                                {inv.due_date ? `결제예정 ${inv.due_date}` : inv.date}
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => void togglePaymentDone(inv)}
+                              className="shrink-0 rounded-xl border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-600"
+                            >
+                              완료취소
+                            </button>
+                          </div>
+                        );
+                      }
+
                       return (
-                        <div key={inv.id} className={cn('rounded-2xl border p-3', inv.payment_done ? 'border-neutral-100 opacity-60' : 'border-neutral-200')}>
+                        <div key={inv.id} className="rounded-2xl border border-neutral-200 p-3">
                           <div className="flex items-start justify-between gap-2 mb-2">
                             <div>
                               <p className="text-xs text-neutral-500">{inv.date}{inv.due_date ? ` → 결제예정 ${inv.due_date}` : ''}</p>
@@ -867,6 +913,33 @@ export default function SettlementTab({ companies }: Props) {
                 className="w-full rounded-2xl bg-neutral-900 px-4 py-4 text-sm font-semibold text-white disabled:opacity-50"
               >
                 {paymentModal.saving ? '저장중' : paymentModal.editingPaymentId !== null ? '수정 저장' : '추가'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* C안: 거래처 목록 추가 제안 모달 */}
+      {pendingCompanyName && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40">
+          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-10">
+            <p className="text-base font-bold mb-2">거래처 등록</p>
+            <p className="text-sm text-neutral-600 mb-4">
+              <b>{pendingCompanyName}</b>을(를) 거래처 목록에 추가할까요?
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => void handleAddCompany(pendingCompanyName)}
+                disabled={addingCompany}
+                className="rounded-2xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {addingCompany ? '추가중' : '추가'}
+              </button>
+              <button
+                onClick={() => setPendingCompanyName(null)}
+                className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-medium text-neutral-700"
+              >
+                이번만 사용
               </button>
             </div>
           </div>

@@ -56,7 +56,6 @@ export default function QuickPanel({
 }: Props) {
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
-  const [itemModalIndex, setItemModalIndex] = useState<number | null>(null);
   // 거래처 등록 확인 프롬프트
   const [pendingCompanyName, setPendingCompanyName] = useState<string | null>(null);
   const [addingCompany, setAddingCompany] = useState(false);
@@ -675,23 +674,31 @@ export default function QuickPanel({
 
                 <div>
                   <p className="mb-1 text-xs text-neutral-500">결과 품목 {quickPanel.productionType === '원료생산' ? '(원료)' : '(분쇄품)'}</p>
+                  <select
+                    value={quickPanel.targetItemId ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '') {
+                        setQuickPanel((prev) => ({ ...prev, targetItemId: null, targetItemName: '' }));
+                      } else {
+                        const id = Number(val);
+                        const item = filteredProductionTargetItems.find((i) => i.id === id);
+                        setQuickPanel((prev) => ({ ...prev, targetItemId: id, targetItemName: item?.name ?? '' }));
+                      }
+                    }}
+                    className="mb-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                  >
+                    <option value="">목록에서 선택</option>
+                    {filteredProductionTargetItems.map((item) => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
+                    ))}
+                  </select>
                   <input
                     value={quickPanel.targetItemName}
                     onChange={(e) => setQuickPanel((prev) => ({ ...prev, targetItemName: e.target.value, targetItemId: null }))}
-                    placeholder="결과 품목 직접 입력 가능"
-                    className="mb-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+                    placeholder="또는 직접 입력 (새 품목으로 추가)"
+                    className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
                   />
-                  <div className="flex flex-wrap gap-2">
-                    {filteredProductionTargetItems.map((item) => (
-                      <button
-                        key={item.id}
-                        onClick={() => setQuickPanel((prev) => ({ ...prev, targetItemId: item.id, targetItemName: item.name }))}
-                        className={cn('rounded-full border px-3 py-2 text-sm', quickPanel.targetItemId === item.id ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50 text-neutral-700')}
-                      >
-                        {item.name}
-                      </button>
-                    ))}
-                  </div>
                   {willCreateProductionTargetItem && (
                     <div className="mt-2 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
                       새 품목으로 추가돼. (<b>{quickPanel.productionType === '원료생산' ? '원료' : '분쇄품'}</b>)
@@ -775,9 +782,32 @@ export default function QuickPanel({
                         <button onClick={() => setQuickPanel((prev) => ({ ...prev, inoutItems: prev.inoutItems.filter((_, i) => i !== index) }))} className="text-red-500 text-xs font-semibold">✕ 삭제</button>
                       )}
                     </div>
-                    <button onClick={() => setItemModalIndex(index)} className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-left text-sm text-neutral-700">
-                      {inoutItem.itemId ? (inventory.find((i) => i.id === inoutItem.itemId)?.name ?? '품목 선택') : '품목 선택 ▼'}
-                    </button>
+                    <select
+                      value={inoutItem.itemId ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setQuickPanel((prev) => {
+                          const next = [...prev.inoutItems];
+                          if (val === '') {
+                            next[index] = { ...next[index], itemId: null, itemName: '' };
+                          } else {
+                            const id = Number(val);
+                            const item = categoryItems.find((i) => i.id === id);
+                            next[index] = { ...next[index], itemId: id, itemName: item?.name ?? '' };
+                          }
+                          return { ...prev, inoutItems: next };
+                        });
+                        setError('');
+                      }}
+                      className="w-full rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                    >
+                      <option value="">품목 선택</option>
+                      {categoryItems.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name} ({Number(item.current_stock).toLocaleString()}{item.unit})
+                        </option>
+                      ))}
+                    </select>
                     <input
                       value={inoutItem.itemName}
                       onChange={(e) => { updateInoutItem(index, 'itemName', e.target.value); updateInoutItem(index, 'itemId', null); }}
@@ -844,42 +874,6 @@ export default function QuickPanel({
         </div>
       </div>
 
-      {/* 품목 선택 모달 */}
-      {itemModalIndex !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setItemModalIndex(null)}>
-          <div className="w-full max-w-md rounded-3xl bg-white p-4 pb-8" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-3 flex items-center justify-between">
-              <p className="text-sm font-semibold">품목 선택</p>
-              <button onClick={() => setItemModalIndex(null)} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
-            </div>
-            <div className="max-h-80 overflow-y-auto space-y-2">
-              {categoryItems.length === 0 ? (
-                <p className="text-sm text-neutral-500 text-center py-4">해당 카테고리에 품목이 없어.</p>
-              ) : (
-                categoryItems.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      const idx = itemModalIndex;
-                      setQuickPanel((prev) => {
-                        const next = [...prev.inoutItems];
-                        next[idx] = { ...next[idx], itemId: item.id, itemName: item.name };
-                        return { ...prev, inoutItems: next };
-                      });
-                      setItemModalIndex(null);
-                      setError('');
-                    }}
-                    className={cn('w-full rounded-2xl border px-4 py-3 text-left text-sm font-medium', quickPanel.inoutItems[itemModalIndex]?.itemId === item.id ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50 text-neutral-700')}
-                  >
-                    {item.name}
-                    <span className="ml-2 text-xs text-neutral-400">{Number(item.current_stock).toLocaleString()}{item.unit}</span>
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

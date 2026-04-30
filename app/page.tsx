@@ -218,7 +218,7 @@ export default function Page() {
                 />
               )}
               {activeTab === 'settlement' && canViewFinance && (
-                <SettlementTab companies={companies} />
+                <SettlementTab companies={companies} onCompanyAdded={fetchCompanies} />
               )}
               {activeTab === 'finance-calendar' && canViewFinance && (
                 <FinanceCalendarTab />
