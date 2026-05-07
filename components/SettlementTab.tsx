@@ -677,11 +677,6 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
             const isExpanded = expandedGroups.has(companyName);
             const pendingInvoices = groupInvoices.filter((inv) => !inv.payment_done);
             const pendingCount = pendingInvoices.length;
-            const pendingAmount = pendingInvoices.reduce((s, inv) => {
-              const total = calcItemTotals(inv.items).total;
-              const paid = calcPaid(inv.payments);
-              return s + Math.max(0, total - paid);
-            }, 0);
             const hasPending = pendingCount > 0;
             // 상태 표시 색상: receivable=초록, payable=주황, 둘 다=금액 큰 쪽
             const pendingReceivableAmt = pendingInvoices
@@ -690,6 +685,7 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
             const pendingPayableAmt = pendingInvoices
               .filter((inv) => inv.direction === 'payable')
               .reduce((s, inv) => s + Math.max(0, calcItemTotals(inv.items).total - calcPaid(inv.payments)), 0);
+            const pendingAmount = pendingReceivableAmt - pendingPayableAmt;
             const indicatorColor = (pendingReceivableAmt > 0 && pendingPayableAmt > 0)
               ? (pendingReceivableAmt >= pendingPayableAmt ? 'bg-emerald-500' : 'bg-orange-500')
               : pendingReceivableAmt > 0 ? 'bg-emerald-500'
