@@ -21,6 +21,8 @@ export type MessageRow = {
   user_id?: string | null;
   user_email?: string | null;
   user_name?: string | null;
+  is_important?: boolean | null;
+  parent_id?: number | null;
 };
 
 export type InventoryLogRow = {
@@ -95,6 +97,7 @@ export type CashFlow = {
   is_recurring: boolean;
   recurring_day?: number | null;
   invoice_id?: number | null;
+  status?: 'planned' | 'done' | null;
   created_at: string;
 };
 

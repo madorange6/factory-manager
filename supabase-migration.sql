@@ -61,6 +61,17 @@ alter table invoices add column if not exists factory text check (factory in ('1
 alter table invoices add column if not exists due_date date;
 
 -- =============================================
+-- 16차 마이그레이션
+-- =============================================
+
+-- cash_flows에 status 컬럼 추가 (★ 예정/실제 구분)
+alter table cash_flows add column if not exists status text default 'planned' check (status in ('planned', 'done'));
+
+-- messages에 중요 표시 및 댓글 컬럼 추가
+alter table messages add column if not exists is_important boolean default false;
+alter table messages add column if not exists parent_id bigint references messages(id) on delete set null;
+
+-- =============================================
 -- RLS 설정 (필요시)
 -- =============================================
 -- alter table companies enable row level security;
