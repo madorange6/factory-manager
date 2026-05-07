@@ -209,6 +209,20 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
     setShowForm(true);
   }
 
+  function openNewFormForCompany(name: string, id: number | null) {
+    setEditingInvoiceId(null);
+    setFormDate(todayString());
+    setFormDueDate('');
+    setFormCompanyId(id);
+    setFormCompanyName(name);
+    setFormDirection('receivable');
+    setFormNote('');
+    setFormFactory(null);
+    setFormInvoiceIssued(false);
+    setFormItems([{ ...EMPTY_ITEM_DRAFT }]);
+    setShowForm(true);
+  }
+
   function openEditForm(inv: InvoiceWithItems) {
     setEditingInvoiceId(inv.id);
     setFormDate(inv.date);
@@ -682,29 +696,45 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
               : pendingPayableAmt > 0 ? 'bg-orange-500'
               : 'bg-neutral-300';
 
+            // 상태 인디케이터 SVG
+            const hasBoth = pendingReceivableAmt > 0 && pendingPayableAmt > 0;
+            const StatusDot = () => {
+              if (!hasPending) return <span className="w-3.5 h-3.5 rounded-full border-2 border-neutral-300 bg-white shrink-0 inline-block" />;
+              if (hasBoth) return (
+                <svg width="14" height="14" viewBox="0 0 14 14" className="shrink-0">
+                  <path d="M7,0 A7,7 0 0,0 7,14 Z" fill="#f97316" />
+                  <path d="M7,0 A7,7 0 0,1 7,14 Z" fill="#10b981" />
+                </svg>
+              );
+              return <span className={cn('w-3.5 h-3.5 rounded-full shrink-0 inline-block', indicatorColor)} />;
+            };
+
             return (
               <div key={companyName} className="rounded-3xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
-                <button
-                  onClick={() => toggleGroup(companyName)}
-                  className="w-full flex items-center justify-between px-4 py-4 text-left"
-                >
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <span className={cn(
-                      'w-3.5 h-3.5 rounded-full border-2 shrink-0',
-                      hasPending ? `${indicatorColor} border-transparent` : 'bg-white border-neutral-300'
-                    )} />
+                <div className="flex items-center px-4 py-4 gap-2">
+                  <button
+                    onClick={() => toggleGroup(companyName)}
+                    className="flex items-center gap-2 min-w-0 flex-1 text-left"
+                  >
+                    <StatusDot />
                     <p className="font-semibold truncate">{companyName}</p>
                     {pendingCount > 0 && (
                       <span className="text-xs text-neutral-400 shrink-0">{pendingCount}건</span>
                     )}
-                  </div>
+                  </button>
                   <div className="flex items-center gap-2 shrink-0">
                     {pendingCount > 0 && (
                       <span className="text-sm font-bold text-neutral-700">{formatCurrency(pendingAmount)}원</span>
                     )}
-                    <span className="text-neutral-400 text-sm">{isExpanded ? '▲' : '▼'}</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openNewFormForCompany(companyName, groupInvoices[0]?.company_id ?? null); }}
+                      className="rounded-full border border-neutral-300 bg-neutral-50 w-6 h-6 flex items-center justify-center text-neutral-500 text-sm font-bold hover:bg-neutral-100"
+                    >+</button>
+                    <button onClick={() => toggleGroup(companyName)} className="text-neutral-400 text-sm">
+                      {isExpanded ? '▲' : '▼'}
+                    </button>
                   </div>
-                </button>
+                </div>
 
                 {isExpanded && (
                   <div className="border-t border-neutral-100 px-3 pb-3 space-y-3 pt-3">
@@ -739,7 +769,7 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
                                   {inv.direction === 'receivable' ? '매출' : '매입'}
                                 </span>
                                 <span className="text-xs text-neutral-500 truncate">
-                                  {invDateStr}{lastPaymentDate ? ` / ${lastPaymentDate}` : ''} | {formatCurrency(doneTotal)}원
+                                  {invDateStr}{lastPaymentDate ? ` / ${lastPaymentDate}` : ''} | {inv.direction === 'payable' ? '-' : ''}{formatCurrency(doneTotal)}원
                                 </span>
                                 <span className="text-neutral-400 text-xs shrink-0">{isDoneExpanded ? '▲' : '▼'}</span>
                               </button>
@@ -836,7 +866,7 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
                                 </tbody>
                               </table>
                               <div className="mt-1 text-right text-xs font-bold">
-                                총합계: {formatCurrency(totals.total)}원
+                                총합계: {inv.direction === 'payable' ? '-' : ''}{formatCurrency(totals.total)}원
                               </div>
                             </div>
                           )}

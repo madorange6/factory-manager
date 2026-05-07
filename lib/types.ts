@@ -86,6 +86,18 @@ export type Invoice = {
   items?: InvoiceItem[];
 };
 
+export type CashFlow = {
+  id: number;
+  date: string;
+  amount: number; // 양수=수입, 음수=지출
+  category?: string | null;
+  memo?: string | null;
+  is_recurring: boolean;
+  recurring_day?: number | null;
+  invoice_id?: number | null;
+  created_at: string;
+};
+
 export type ProductionSource = {
   itemId: number | null;
   customName: string;
