@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase/client';
-import { Company, Invoice, InvoiceItem, Payment } from '../lib/types';
+import { Company, InventoryItem, Invoice, InvoiceItem, Payment } from '../lib/types';
 import { cn, formatCurrency, getErrorMessage, todayString } from '../lib/utils';
 
 type Props = {
   companies: Company[];
+  inventory: InventoryItem[];
   onCompanyAdded: () => Promise<void>;
 };
 
@@ -31,6 +32,30 @@ const EMPTY_ITEM_DRAFT: InvoiceItemDraft = {
 type StatusFilter = 'all' | 'pending' | 'done';
 type FactoryFilter = 'all' | '1공장' | '2공장';
 type DirectionFilter = 'all' | 'receivable' | 'payable';
+type InvoiceStatusFilter = 'all' | 'issued' | 'scheduled' | 'none';
+
+type UnitPriceModalItem = {
+  itemId: number;
+  itemName: string;
+  unitPriceId: string | null;
+  unitPrice: string;
+  memo: string;
+};
+
+type UnitPriceModal = {
+  open: boolean;
+  companyId: number | null;
+  companyName: string;
+  loading: boolean;
+  saving: boolean;
+  error: string;
+  items: UnitPriceModalItem[];
+};
+
+const EMPTY_UNIT_PRICE_MODAL: UnitPriceModal = {
+  open: false, companyId: null, companyName: '',
+  loading: false, saving: false, error: '', items: [],
+};
 
 type PaymentModal = {
   open: boolean;
@@ -54,13 +79,14 @@ const EMPTY_PAYMENT_MODAL: PaymentModal = {
   error: '',
 };
 
-export default function SettlementTab({ companies, onCompanyAdded }: Props) {
+export default function SettlementTab({ companies, inventory, onCompanyAdded }: Props) {
   const [invoices, setInvoices] = useState<InvoiceWithItems[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorText, setErrorText] = useState('');
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all');
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<InvoiceStatusFilter>('all');
   const [summaryFactoryFilter, setSummaryFactoryFilter] = useState<FactoryFilter>('all');
   const [companySearch, setCompanySearch] = useState('');
 
@@ -76,7 +102,7 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
   const [formDirection, setFormDirection] = useState<'receivable' | 'payable'>('receivable');
   const [formNote, setFormNote] = useState('');
   const [formFactory, setFormFactory] = useState<string | null>(null);
-  const [formInvoiceIssued, setFormInvoiceIssued] = useState(false);
+  const [formInvoiceStatus, setFormInvoiceStatus] = useState<'issued' | 'scheduled' | 'none'>('none');
   const [formItems, setFormItems] = useState<InvoiceItemDraft[]>([{ ...EMPTY_ITEM_DRAFT }]);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -86,6 +112,8 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
   const [pendingCompanyName, setPendingCompanyName] = useState<string | null>(null);
   const [addingCompany, setAddingCompany] = useState(false);
   const [expandedDoneIds, setExpandedDoneIds] = useState<Set<number>>(new Set());
+  const [unitPriceModal, setUnitPriceModal] = useState<UnitPriceModal>(EMPTY_UNIT_PRICE_MODAL);
+  const lastStarTapRef = useRef<{ name: string; time: number } | null>(null);
 
   useEffect(() => { void fetchInvoices(); }, []);
 
@@ -146,6 +174,7 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
     if (statusFilter === 'pending' && inv.payment_done) return false;
     if (statusFilter === 'done' && !inv.payment_done) return false;
     if (directionFilter !== 'all' && inv.direction !== directionFilter) return false;
+    if (invoiceStatusFilter !== 'all' && inv.invoice_status !== invoiceStatusFilter) return false;
     if (companySearch.trim() && !inv.company_name.includes(companySearch.trim())) return false;
     return true;
   });
@@ -204,7 +233,7 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
     setFormDirection('receivable');
     setFormNote('');
     setFormFactory(null);
-    setFormInvoiceIssued(false);
+    setFormInvoiceStatus('none');
     setFormItems([{ ...EMPTY_ITEM_DRAFT }]);
     setShowForm(true);
   }
@@ -218,7 +247,7 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
     setFormDirection('receivable');
     setFormNote('');
     setFormFactory(null);
-    setFormInvoiceIssued(false);
+    setFormInvoiceStatus('none');
     setFormItems([{ ...EMPTY_ITEM_DRAFT }]);
     setShowForm(true);
   }
@@ -232,7 +261,7 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
     setFormDirection(inv.direction);
     setFormNote(inv.note ?? '');
     setFormFactory(inv.factory ?? null);
-    setFormInvoiceIssued(inv.invoice_issued ?? false);
+    setFormInvoiceStatus(inv.invoice_status ?? 'none');
     setFormItems(inv.items.map((item) => ({
       item_name: item.item_name ?? '',
       quantity: String(item.quantity),
@@ -257,7 +286,7 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
         direction: formDirection,
         date: formDate,
         due_date: formDueDate.trim() || null,
-        invoice_issued: formInvoiceIssued,
+        invoice_status: formInvoiceStatus,
         factory: formFactory,
         note: formNote.trim() || null,
       };
@@ -330,13 +359,79 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
     }
   }
 
-  async function toggleInvoiceIssued(inv: InvoiceWithItems) {
+  async function setInvoiceStatus(inv: InvoiceWithItems, status: 'issued' | 'scheduled' | 'none') {
     try {
-      const { error } = await supabase.from('invoices').update({ invoice_issued: !inv.invoice_issued }).eq('id', inv.id);
+      const { error } = await supabase.from('invoices').update({ invoice_status: status }).eq('id', inv.id);
       if (error) throw error;
-      setInvoices((prev) => prev.map((i) => i.id === inv.id ? { ...i, invoice_issued: !inv.invoice_issued } : i));
+      setInvoices((prev) => prev.map((i) => i.id === inv.id ? { ...i, invoice_status: status } : i));
     } catch (error) {
       setErrorText(getErrorMessage(error));
+    }
+  }
+
+  function handleStarTap(companyName: string, companyId: number | null) {
+    const now = Date.now();
+    const last = lastStarTapRef.current;
+    if (last && last.name === companyName && now - last.time < 400) {
+      lastStarTapRef.current = null;
+      void openUnitPriceModal(companyName, companyId);
+    } else {
+      lastStarTapRef.current = { name: companyName, time: now };
+    }
+  }
+
+  async function openUnitPriceModal(companyName: string, companyId: number | null) {
+    setUnitPriceModal({ open: true, companyId, companyName, loading: true, saving: false, error: '', items: [] });
+    try {
+      let query = supabase.from('inventory_logs').select('item_id').not('item_id', 'is', null);
+      if (companyId) query = query.eq('company_id', companyId);
+      else query = query.eq('company_name', companyName);
+      const { data: logData } = await query;
+      const itemIds = [...new Set((logData ?? []).map((l: { item_id: number }) => l.item_id).filter(Boolean))];
+
+      if (itemIds.length === 0) {
+        setUnitPriceModal((p) => ({ ...p, loading: false, items: [] }));
+        return;
+      }
+
+      const [{ data: itemData }, { data: priceData }] = await Promise.all([
+        supabase.from('inventory_items').select('id, name').in('id', itemIds).order('name'),
+        supabase.from('unit_prices').select('*').in('inventory_item_id', itemIds),
+      ]);
+
+      const priceMap = new Map((priceData ?? []).map((p: { inventory_item_id: number; id: string; unit_price: number; memo: string | null }) => [p.inventory_item_id, p]));
+      const items: UnitPriceModalItem[] = (itemData ?? []).map((item: { id: number; name: string }) => {
+        const existing = priceMap.get(item.id);
+        return {
+          itemId: item.id,
+          itemName: item.name,
+          unitPriceId: existing?.id ?? null,
+          unitPrice: existing ? String(existing.unit_price) : '',
+          memo: existing?.memo ?? '',
+        };
+      });
+      setUnitPriceModal((p) => ({ ...p, loading: false, items }));
+    } catch (e) {
+      setUnitPriceModal((p) => ({ ...p, loading: false, error: getErrorMessage(e) }));
+    }
+  }
+
+  async function handleSaveUnitPrices() {
+    const toSave = unitPriceModal.items.filter((item) => item.unitPrice.trim() !== '');
+    if (toSave.length === 0) { setUnitPriceModal(EMPTY_UNIT_PRICE_MODAL); return; }
+    try {
+      setUnitPriceModal((p) => ({ ...p, saving: true, error: '' }));
+      for (const item of toSave) {
+        await supabase.from('unit_prices').upsert({
+          inventory_item_id: item.itemId,
+          unit_price: Number(item.unitPrice),
+          memo: item.memo.trim() || null,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'inventory_item_id' });
+      }
+      setUnitPriceModal(EMPTY_UNIT_PRICE_MODAL);
+    } catch (e) {
+      setUnitPriceModal((p) => ({ ...p, saving: false, error: getErrorMessage(e) }));
     }
   }
 
@@ -518,12 +613,23 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
             </div>
             <div>
               <p className="mb-1 text-xs text-neutral-500">계산서 발행 여부</p>
-              <button
-                onClick={() => setFormInvoiceIssued((prev) => !prev)}
-                className={cn('w-full rounded-2xl border py-3 text-sm font-semibold', formInvoiceIssued ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-neutral-200 bg-white text-neutral-700')}
-              >
-                {formInvoiceIssued ? '✅ 발행됨' : '❌ 미발행'}
-              </button>
+              <div className="grid grid-cols-3 gap-2">
+                {([['issued', '발행'], ['scheduled', '예정'], ['none', '미발행']] as const).map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => setFormInvoiceStatus(val)}
+                    className={cn('rounded-2xl border py-2.5 text-sm font-semibold',
+                      formInvoiceStatus === val
+                        ? val === 'issued' ? 'border-emerald-600 bg-emerald-600 text-white'
+                        : val === 'scheduled' ? 'border-blue-500 bg-blue-500 text-white'
+                        : 'border-neutral-400 bg-neutral-400 text-white'
+                        : 'border-neutral-200 bg-white text-neutral-700'
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div>
               <p className="mb-1 text-xs text-neutral-500">공장</p>
@@ -645,6 +751,26 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
         ))}
       </div>
 
+      {/* 계산서 필터 [전체][발행][예정][미발행] */}
+      <div className="mb-2 flex gap-1.5">
+        {([['all', '전체'], ['issued', '발행'], ['scheduled', '예정'], ['none', '미발행']] as [InvoiceStatusFilter, string][]).map(([val, label]) => (
+          <button
+            key={val}
+            onClick={() => setInvoiceStatusFilter(val)}
+            className={cn('flex-1 rounded-2xl border py-1.5 text-xs font-medium',
+              invoiceStatusFilter === val
+                ? val === 'issued' ? 'border-emerald-600 bg-emerald-600 text-white'
+                : val === 'scheduled' ? 'border-blue-500 bg-blue-500 text-white'
+                : val === 'none' ? 'border-neutral-500 bg-neutral-500 text-white'
+                : 'border-neutral-900 bg-neutral-900 text-white'
+                : 'border-neutral-200 bg-white text-neutral-600'
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* 상태 필터 + 거래처 검색 */}
       <div className="mb-3 space-y-2">
         <div className="flex gap-2">
@@ -722,6 +848,10 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
                     {pendingCount > 0 && (
                       <span className="text-sm font-bold text-neutral-700">{formatCurrency(pendingAmount)}원</span>
                     )}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleStarTap(companyName, groupInvoices[0]?.company_id ?? null); }}
+                      className="rounded-full border border-amber-200 bg-amber-50 w-6 h-6 flex items-center justify-center text-amber-500 text-xs font-bold hover:bg-amber-100"
+                    >★</button>
                     <button
                       onClick={(e) => { e.stopPropagation(); openNewFormForCompany(companyName, groupInvoices[0]?.company_id ?? null); }}
                       className="rounded-full border border-neutral-300 bg-neutral-50 w-6 h-6 flex items-center justify-center text-neutral-500 text-sm font-bold hover:bg-neutral-100"
@@ -932,13 +1062,24 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
                             />
                           </div>
 
-                          {/* 계산서 발행 여부 (독립 체크박스) */}
-                          <button
-                            onClick={() => void toggleInvoiceIssued(inv)}
-                            className={cn('w-full mb-2 rounded-xl border py-1.5 text-xs font-semibold transition', inv.invoice_issued ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-neutral-200 bg-white text-neutral-600')}
-                          >
-                            계산서 {inv.invoice_issued ? '✅ 발행됨' : '❌ 미발행'}
-                          </button>
+                          {/* 계산서 발행 여부 (3단계) */}
+                          <div className="mb-2 grid grid-cols-3 gap-1">
+                            {([['issued', '발행'], ['scheduled', '예정'], ['none', '미발행']] as const).map(([val, label]) => (
+                              <button
+                                key={val}
+                                onClick={() => void setInvoiceStatus(inv, val)}
+                                className={cn('rounded-xl border py-1.5 text-xs font-semibold transition',
+                                  inv.invoice_status === val
+                                    ? val === 'issued' ? 'border-emerald-600 bg-emerald-600 text-white'
+                                    : val === 'scheduled' ? 'border-blue-500 bg-blue-500 text-white'
+                                    : 'border-neutral-400 bg-neutral-400 text-white'
+                                    : 'border-neutral-200 bg-white text-neutral-600'
+                                )}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
 
                           {/* 공장 선택 (독립) */}
                           <div className="mb-2 grid grid-cols-3 gap-1">
@@ -1030,6 +1171,65 @@ export default function SettlementTab({ companies, onCompanyAdded }: Props) {
                 {paymentModal.saving ? '저장중' : paymentModal.editingPaymentId !== null ? '수정 저장' : '추가'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 단가 기록 모달 */}
+      {unitPriceModal.open && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setUnitPriceModal(EMPTY_UNIT_PRICE_MODAL)}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-10 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-base font-bold">{unitPriceModal.companyName} 단가</p>
+              <button onClick={() => setUnitPriceModal(EMPTY_UNIT_PRICE_MODAL)} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
+            </div>
+            {unitPriceModal.loading ? (
+              <p className="py-6 text-center text-sm text-neutral-500">불러오는 중…</p>
+            ) : unitPriceModal.items.length === 0 ? (
+              <p className="py-6 text-center text-sm text-neutral-500">등록된 거래 품목이 없어.</p>
+            ) : (
+              <div className="space-y-3">
+                {unitPriceModal.items.map((item, idx) => (
+                  <div key={item.itemId} className="rounded-2xl border border-neutral-200 p-3">
+                    <p className="mb-2 text-sm font-semibold">{item.itemName}</p>
+                    <div className="flex gap-2">
+                      <input
+                        type="number" inputMode="decimal" placeholder="단가"
+                        value={item.unitPrice}
+                        onChange={(e) => setUnitPriceModal((p) => {
+                          const items = [...p.items];
+                          items[idx] = { ...items[idx], unitPrice: e.target.value };
+                          return { ...p, items };
+                        })}
+                        className="flex-1 rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                      />
+                      <input
+                        placeholder="메모"
+                        value={item.memo}
+                        onChange={(e) => setUnitPriceModal((p) => {
+                          const items = [...p.items];
+                          items[idx] = { ...items[idx], memo: e.target.value };
+                          return { ...p, items };
+                        })}
+                        className="flex-1 rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {unitPriceModal.error && (
+              <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{unitPriceModal.error}</div>
+            )}
+            {!unitPriceModal.loading && unitPriceModal.items.length > 0 && (
+              <button
+                onClick={() => void handleSaveUnitPrices()}
+                disabled={unitPriceModal.saving}
+                className="mt-4 w-full rounded-2xl bg-neutral-900 px-4 py-4 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {unitPriceModal.saving ? '저장중' : '저장'}
+              </button>
+            )}
           </div>
         </div>
       )}

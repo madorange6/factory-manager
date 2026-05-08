@@ -72,6 +72,28 @@ alter table messages add column if not exists is_important boolean default false
 alter table messages add column if not exists parent_id bigint references messages(id) on delete set null;
 
 -- =============================================
+-- 18차 마이그레이션
+-- =============================================
+
+-- invoices: invoice_issued boolean → invoice_status text (발행/예정/미발행 3단계)
+ALTER TABLE invoices
+  ADD COLUMN IF NOT EXISTS invoice_status text NOT NULL DEFAULT 'none'
+  CHECK (invoice_status IN ('issued', 'scheduled', 'none'));
+UPDATE invoices SET invoice_status = 'issued' WHERE invoice_issued = true;
+UPDATE invoices SET invoice_status = 'none' WHERE invoice_issued = false;
+ALTER TABLE invoices DROP COLUMN IF EXISTS invoice_issued;
+
+-- unit_prices 테이블 신규 생성 (거래처별 단가 기록)
+CREATE TABLE IF NOT EXISTS unit_prices (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  inventory_item_id bigint UNIQUE REFERENCES inventory_items(id) ON DELETE CASCADE,
+  unit_price numeric NOT NULL,
+  memo text,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+-- =============================================
 -- RLS 설정 (필요시)
 -- =============================================
 -- alter table companies enable row level security;

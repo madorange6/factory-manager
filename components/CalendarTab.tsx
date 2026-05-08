@@ -172,7 +172,7 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
           company_name: companyName,
           direction,
           date: logDate,
-          invoice_issued: false,
+          invoice_status: 'none',
           payment_done: false,
           note: `입출고 로그 #${log.id}에서 생성`,
         })

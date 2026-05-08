@@ -80,12 +80,21 @@ export type Invoice = {
   direction: 'receivable' | 'payable';
   date: string;
   due_date?: string | null;
-  invoice_issued: boolean;
+  invoice_status: 'issued' | 'scheduled' | 'none';
   payment_done: boolean;
   factory?: string | null;
   note?: string | null;
   created_at: string;
   items?: InvoiceItem[];
+};
+
+export type UnitPrice = {
+  id: string;
+  inventory_item_id: number;
+  unit_price: number;
+  memo?: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type CashFlow = {

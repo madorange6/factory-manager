@@ -193,6 +193,8 @@ export default function Page() {
                   currentUserEmail={currentUserEmail}
                   currentUserName={currentUserName}
                   onOpenQuickPanel={openQuickPanel}
+                  companies={companies}
+                  inventory={inventory}
                 />
               )}
               {activeTab === 'calendar' && (
@@ -218,7 +220,7 @@ export default function Page() {
                 />
               )}
               {activeTab === 'settlement' && canViewFinance && (
-                <SettlementTab companies={companies} onCompanyAdded={fetchCompanies} />
+                <SettlementTab companies={companies} inventory={inventory} onCompanyAdded={fetchCompanies} />
               )}
               {activeTab === 'finance-calendar' && canViewFinance && (
                 <FinanceCalendarTab />

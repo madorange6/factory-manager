@@ -2,10 +2,19 @@
 
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase/client';
-import { MessageRow } from '../lib/types';
-import { cn, formatChatDateTime, getErrorMessage } from '../lib/utils';
+import { Company, InventoryItem, MessageRow } from '../lib/types';
+import { cn, formatChatDateTime, formatCurrency, getErrorMessage } from '../lib/utils';
 
 const ADMIN_EMAIL = 'sj_advisory@naver.com';
+
+type DollarTrigger = {
+  step: 'company' | 'prices';
+  search: string;
+  selectedCompanyId: number | null;
+  selectedCompanyName: string;
+  priceItems: Array<{ itemId: number; itemName: string; unitPrice: number | null }>;
+  loadingPrices: boolean;
+} | null;
 
 type Props = {
   messages: MessageRow[];
@@ -14,6 +23,8 @@ type Props = {
   currentUserEmail: string | null;
   currentUserName: string | null;
   onOpenQuickPanel: () => void;
+  companies: Company[];
+  inventory: InventoryItem[];
 };
 
 type ContextMenu = { message: MessageRow } | null;
@@ -46,12 +57,14 @@ export default function ChatTab({
   currentUserEmail,
   currentUserName,
   onOpenQuickPanel,
+  companies,
 }: Props) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [errorText, setErrorText] = useState('');
   const [contextMenu, setContextMenu] = useState<ContextMenu>(null);
   const [replyTo, setReplyTo] = useState<MessageRow | null>(null);
+  const [dollarTrigger, setDollarTrigger] = useState<DollarTrigger>(null);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -147,6 +160,46 @@ export default function ChatTab({
     }
   }
 
+  async function openDollarCompany(companyId: number | null, companyName: string) {
+    setDollarTrigger({ step: 'prices', search: '', selectedCompanyId: companyId, selectedCompanyName: companyName, priceItems: [], loadingPrices: true });
+    try {
+      let query = supabase.from('inventory_logs').select('item_id').not('item_id', 'is', null);
+      if (companyId) query = query.eq('company_id', companyId);
+      else query = query.eq('company_name', companyName);
+      const { data: logData } = await query;
+      const itemIds = [...new Set((logData ?? []).map((l: { item_id: number }) => l.item_id).filter(Boolean))];
+
+      if (itemIds.length === 0) {
+        setDollarTrigger((p) => p ? { ...p, loadingPrices: false, priceItems: [] } : null);
+        return;
+      }
+
+      const [{ data: itemData }, { data: priceData }] = await Promise.all([
+        supabase.from('inventory_items').select('id, name').in('id', itemIds).order('name'),
+        supabase.from('unit_prices').select('inventory_item_id, unit_price').in('inventory_item_id', itemIds),
+      ]);
+
+      const priceMap = new Map((priceData ?? []).map((p: { inventory_item_id: number; unit_price: number }) => [p.inventory_item_id, p.unit_price]));
+      const priceItems = (itemData ?? []).map((item: { id: number; name: string }) => ({
+        itemId: item.id,
+        itemName: item.name,
+        unitPrice: priceMap.has(item.id) ? priceMap.get(item.id)! : null,
+      }));
+      setDollarTrigger((p) => p ? { ...p, loadingPrices: false, priceItems } : null);
+    } catch {
+      setDollarTrigger((p) => p ? { ...p, loadingPrices: false } : null);
+    }
+  }
+
+  function selectPriceItem(companyName: string, itemName: string, unitPrice: number | null) {
+    const text = unitPrice != null
+      ? `${companyName} ${itemName} 단가: ${formatCurrency(unitPrice)}원`
+      : `${companyName} ${itemName} 단가: 미등록`;
+    setInput((prev) => prev + text);
+    setDollarTrigger(null);
+    setTimeout(() => inputRef.current?.focus(), 100);
+  }
+
   // 항목 5: 중요 표시 토글
   async function handleToggleImportant(message: MessageRow) {
     const newVal = !message.is_important;
@@ -200,6 +253,7 @@ export default function ChatTab({
         <div className="mb-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
           <p className="text-sm font-semibold">빠른 사용법</p>
           <p className="mt-1 text-xs leading-5 text-neutral-500">⚡ 버튼 또는 / 입력으로 빠른입력 열기</p>
+          <p className="mt-0.5 text-xs leading-5 text-neutral-500">$ 입력 → 거래처 단가 조회</p>
           <p className="mt-0.5 text-xs leading-5 text-neutral-400">메시지 길게 누르기 → 중요 표시 / 댓글</p>
         </div>
 
@@ -295,7 +349,11 @@ export default function ChatTab({
             <textarea
               ref={inputRef}
               value={input}
-              onChange={(e) => { const v = e.target.value; setInput(v); if (v.trim() === '/') { setInput(''); onOpenQuickPanel(); } }}
+              onChange={(e) => {
+                const v = e.target.value; setInput(v);
+                if (v.trim() === '/') { setInput(''); onOpenQuickPanel(); return; }
+                if (v.trim() === '$') { setInput(''); setDollarTrigger({ step: 'company', search: '', selectedCompanyId: null, selectedCompanyName: '', priceItems: [], loadingPrices: false }); }
+              }}
               placeholder={replyTo ? '댓글 입력…' : '메시지 입력 또는 ⚡로 빠른입력'}
               rows={1}
               className="max-h-32 min-h-[44px] flex-1 resize-none rounded-2xl border-0 bg-transparent px-3 py-2 text-sm outline-none placeholder:text-neutral-400"
@@ -307,6 +365,73 @@ export default function ChatTab({
           </div>
         </div>
       </div>
+
+      {/* $ 단가 조회 Bottom Sheet */}
+      {dollarTrigger && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setDollarTrigger(null)}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-10 max-h-[70vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            {dollarTrigger.step === 'company' ? (
+              <>
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-base font-bold">$ 단가 조회 — 거래처 선택</p>
+                  <button onClick={() => setDollarTrigger(null)} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
+                </div>
+                <input
+                  autoFocus
+                  placeholder="거래처 검색"
+                  value={dollarTrigger.search}
+                  onChange={(e) => setDollarTrigger((p) => p ? { ...p, search: e.target.value } : null)}
+                  className="mb-3 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+                />
+                <div className="space-y-1">
+                  {companies
+                    .filter((c) => !dollarTrigger.search.trim() || c.name.includes(dollarTrigger.search.trim()))
+                    .map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => void openDollarCompany(c.id, c.name)}
+                        className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-left text-sm font-medium text-neutral-800 hover:bg-neutral-50"
+                      >
+                        {c.name}
+                      </button>
+                    ))
+                  }
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mb-3 flex items-center justify-between">
+                  <button onClick={() => setDollarTrigger((p) => p ? { ...p, step: 'company', priceItems: [] } : null)} className="text-sm text-neutral-500">← 뒤로</button>
+                  <p className="text-base font-bold">{dollarTrigger.selectedCompanyName}</p>
+                  <button onClick={() => setDollarTrigger(null)} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
+                </div>
+                {dollarTrigger.loadingPrices ? (
+                  <p className="py-6 text-center text-sm text-neutral-500">불러오는 중…</p>
+                ) : dollarTrigger.priceItems.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-neutral-500">등록된 거래 품목이 없어.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {dollarTrigger.priceItems.map((item) => (
+                      <button
+                        key={item.itemId}
+                        onClick={() => selectPriceItem(dollarTrigger.selectedCompanyName, item.itemName, item.unitPrice)}
+                        className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-left hover:bg-neutral-50"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-neutral-800">{item.itemName}</span>
+                          <span className={cn('text-sm font-semibold', item.unitPrice != null ? 'text-neutral-900' : 'text-neutral-400')}>
+                            {item.unitPrice != null ? `${formatCurrency(item.unitPrice)}원` : '미등록'}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 항목 5: 컨텍스트 메뉴 Bottom Sheet */}
       {contextMenu && (

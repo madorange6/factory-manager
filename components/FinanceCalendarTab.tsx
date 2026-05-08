@@ -43,7 +43,7 @@ type InvoiceEditSheet = {
   companyName: string;
   dueDate: string;
   factory: string;
-  invoiceIssued: boolean;
+  invoiceStatus: 'issued' | 'scheduled' | 'none';
   paymentDone: boolean;
   note: string;
   saving: boolean;
@@ -52,7 +52,7 @@ type InvoiceEditSheet = {
 
 const EMPTY_INVOICE_EDIT: InvoiceEditSheet = {
   open: false, invoice: null, companyName: '', dueDate: '',
-  factory: '', invoiceIssued: false, paymentDone: false,
+  factory: '', invoiceStatus: 'none', paymentDone: false,
   note: '', saving: false, error: '',
 };
 
@@ -432,7 +432,7 @@ export default function FinanceCalendarTab() {
     setInvoiceEdit({
       open: true, invoice: inv, companyName: inv.company_name,
       dueDate: inv.due_date ?? '', factory: inv.factory ?? '',
-      invoiceIssued: inv.invoice_issued, paymentDone: inv.payment_done,
+      invoiceStatus: inv.invoice_status ?? 'none', paymentDone: inv.payment_done,
       note: inv.note ?? '', saving: false, error: '',
     });
   }
@@ -446,7 +446,7 @@ export default function FinanceCalendarTab() {
         company_name: invoiceEdit.companyName.trim(),
         due_date: invoiceEdit.dueDate || null,
         factory: invoiceEdit.factory || null,
-        invoice_issued: invoiceEdit.invoiceIssued,
+        invoice_status: invoiceEdit.invoiceStatus,
         payment_done: invoiceEdit.paymentDone,
         note: invoiceEdit.note.trim() || null,
       }).eq('id', invoiceEdit.invoice.id);
@@ -890,8 +890,12 @@ export default function FinanceCalendarTab() {
                             )}
 
                             <div className="mt-1 flex items-center gap-2 flex-wrap">
-                              <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', inv.invoice_issued ? 'bg-emerald-50 text-emerald-700' : 'bg-neutral-100 text-neutral-500')}>
-                                {inv.invoice_issued ? '계산서 발행' : '미발행'}
+                              <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium',
+                                inv.invoice_status === 'issued' ? 'bg-emerald-50 text-emerald-700' :
+                                inv.invoice_status === 'scheduled' ? 'bg-blue-50 text-blue-700' :
+                                'bg-neutral-100 text-neutral-500'
+                              )}>
+                                {inv.invoice_status === 'issued' ? '계산서 발행' : inv.invoice_status === 'scheduled' ? '발행예정' : '미발행'}
                               </span>
                               {inv.note && <span className="text-[10px] text-blue-600">{inv.note}</span>}
                             </div>
@@ -1113,12 +1117,24 @@ export default function FinanceCalendarTab() {
                   ))}
                 </div>
               </div>
-              <div className="flex items-center justify-between rounded-2xl border border-neutral-200 bg-white px-4 py-3">
-                <span className="text-sm text-neutral-700">계산서 발행</span>
-                <button onClick={() => setInvoiceEdit((p) => ({ ...p, invoiceIssued: !p.invoiceIssued }))}
-                  className={cn('w-12 h-6 rounded-full transition-colors relative', invoiceEdit.invoiceIssued ? 'bg-emerald-500' : 'bg-neutral-200')}>
-                  <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform', invoiceEdit.invoiceIssued ? 'translate-x-6' : 'translate-x-0.5')} />
-                </button>
+              <div>
+                <p className="mb-1 text-xs text-neutral-500">계산서 발행 여부</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {([['issued', '발행'], ['scheduled', '예정'], ['none', '미발행']] as const).map(([val, label]) => (
+                    <button
+                      key={val}
+                      onClick={() => setInvoiceEdit((p) => ({ ...p, invoiceStatus: val }))}
+                      className={cn('rounded-2xl border py-2.5 text-sm font-semibold',
+                        invoiceEdit.invoiceStatus === val
+                          ? val === 'issued' ? 'border-emerald-600 bg-emerald-600 text-white'
+                          : val === 'scheduled' ? 'border-blue-500 bg-blue-500 text-white'
+                          : 'border-neutral-400 bg-neutral-400 text-white'
+                          : 'border-neutral-200 bg-white text-neutral-700'
+                      )}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="flex items-center justify-between rounded-2xl border border-neutral-200 bg-white px-4 py-3">
                 <span className="text-sm text-neutral-700">결제 완료</span>
