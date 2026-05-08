@@ -23,6 +23,7 @@ export type MessageRow = {
   user_name?: string | null;
   is_important?: boolean | null;
   parent_id?: number | null;
+  source?: 'user' | 'system' | null;
 };
 
 export type InventoryLogRow = {
@@ -38,6 +39,17 @@ export type InventoryLogRow = {
   user_name?: string | null;
   company_id?: number | null;
   company_name?: string | null;
+  bag_count?: number | null;
+  kg_weight?: number | null;
+  is_settled?: boolean | null;
+};
+
+export type CompanyMemo = {
+  id: string;
+  company_id: number;
+  content: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type UserProfile = {

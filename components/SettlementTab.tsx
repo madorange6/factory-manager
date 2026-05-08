@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase/client';
-import { Company, InventoryItem, Invoice, InvoiceItem, Payment } from '../lib/types';
+import { Company, CompanyMemo, InventoryItem, Invoice, InvoiceItem, Payment } from '../lib/types';
 import { cn, formatCurrency, getErrorMessage, todayString } from '../lib/utils';
 
 type Props = {
@@ -50,11 +50,21 @@ type UnitPriceModal = {
   saving: boolean;
   error: string;
   items: UnitPriceModalItem[];
+  companyMemos: CompanyMemo[];
+  newMemoContent: string;
+  editingMemoId: string | null;
+  editingMemoContent: string;
+  newItemName: string;
+  newItemPrice: string;
+  addingItem: boolean;
 };
 
 const EMPTY_UNIT_PRICE_MODAL: UnitPriceModal = {
   open: false, companyId: null, companyName: '',
   loading: false, saving: false, error: '', items: [],
+  companyMemos: [], newMemoContent: '',
+  editingMemoId: null, editingMemoContent: '',
+  newItemName: '', newItemPrice: '', addingItem: false,
 };
 
 type PaymentModal = {
@@ -381,7 +391,7 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
   }
 
   async function openUnitPriceModal(companyName: string, companyId: number | null) {
-    setUnitPriceModal({ open: true, companyId, companyName, loading: true, saving: false, error: '', items: [] });
+    setUnitPriceModal({ ...EMPTY_UNIT_PRICE_MODAL, open: true, companyId, companyName, loading: true });
     try {
       let query = supabase.from('inventory_logs').select('item_id').not('item_id', 'is', null);
       if (companyId) query = query.eq('company_id', companyId);
@@ -389,14 +399,16 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
       const { data: logData } = await query;
       const itemIds = [...new Set((logData ?? []).map((l: { item_id: number }) => l.item_id).filter(Boolean))];
 
-      if (itemIds.length === 0) {
-        setUnitPriceModal((p) => ({ ...p, loading: false, items: [] }));
-        return;
-      }
-
-      const [{ data: itemData }, { data: priceData }] = await Promise.all([
-        supabase.from('inventory_items').select('id, name').in('id', itemIds).order('name'),
-        supabase.from('unit_prices').select('*').in('inventory_item_id', itemIds),
+      const [itemData, priceData, memoData] = await Promise.all([
+        itemIds.length > 0
+          ? supabase.from('inventory_items').select('id, name').in('id', itemIds).order('name').then((r) => r.data)
+          : Promise.resolve([]),
+        itemIds.length > 0
+          ? supabase.from('unit_prices').select('*').in('inventory_item_id', itemIds).then((r) => r.data)
+          : Promise.resolve([]),
+        companyId
+          ? supabase.from('company_memos').select('*').eq('company_id', companyId).order('created_at', { ascending: false }).then((r) => r.data)
+          : Promise.resolve([]),
       ]);
 
       const priceMap = new Map((priceData ?? []).map((p: { inventory_item_id: number; id: string; unit_price: number; memo: string | null }) => [p.inventory_item_id, p]));
@@ -410,7 +422,7 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
           memo: existing?.memo ?? '',
         };
       });
-      setUnitPriceModal((p) => ({ ...p, loading: false, items }));
+      setUnitPriceModal((p) => ({ ...p, loading: false, items, companyMemos: (memoData ?? []) as CompanyMemo[] }));
     } catch (e) {
       setUnitPriceModal((p) => ({ ...p, loading: false, error: getErrorMessage(e) }));
     }
@@ -433,6 +445,53 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
       setUnitPriceModal(EMPTY_UNIT_PRICE_MODAL);
     } catch (e) {
       setUnitPriceModal((p) => ({ ...p, saving: false, error: getErrorMessage(e) }));
+    }
+  }
+
+  async function handleAddMemo() {
+    const content = unitPriceModal.newMemoContent.trim();
+    if (!content || !unitPriceModal.companyId) return;
+    const { data, error } = await supabase.from('company_memos')
+      .insert({ company_id: unitPriceModal.companyId, content })
+      .select('*').single();
+    if (error) { setUnitPriceModal((p) => ({ ...p, error: getErrorMessage(error) })); return; }
+    setUnitPriceModal((p) => ({ ...p, newMemoContent: '', companyMemos: [data as CompanyMemo, ...p.companyMemos] }));
+  }
+
+  async function handleSaveMemo(id: string) {
+    const content = unitPriceModal.editingMemoContent.trim();
+    if (!content) return;
+    const { error } = await supabase.from('company_memos').update({ content, updated_at: new Date().toISOString() }).eq('id', id);
+    if (error) { setUnitPriceModal((p) => ({ ...p, error: getErrorMessage(error) })); return; }
+    setUnitPriceModal((p) => ({
+      ...p, editingMemoId: null, editingMemoContent: '',
+      companyMemos: p.companyMemos.map((m) => m.id === id ? { ...m, content } : m),
+    }));
+  }
+
+  async function handleDeleteMemo(id: string) {
+    if (!window.confirm('메모를 삭제할까요?')) return;
+    const { error } = await supabase.from('company_memos').delete().eq('id', id);
+    if (error) { setUnitPriceModal((p) => ({ ...p, error: getErrorMessage(error) })); return; }
+    setUnitPriceModal((p) => ({ ...p, companyMemos: p.companyMemos.filter((m) => m.id !== id) }));
+  }
+
+  async function handleAddNewItem() {
+    const name = unitPriceModal.newItemName.trim();
+    if (!name) return;
+    setUnitPriceModal((p) => ({ ...p, addingItem: true, error: '' }));
+    try {
+      const { data: itemData, error: itemErr } = await supabase
+        .from('inventory_items').insert({ name, category: '분쇄품', unit: 'bag', current_stock: 0 })
+        .select('id, name').single();
+      if (itemErr) throw itemErr;
+      const newItem = itemData as { id: number; name: string };
+      setUnitPriceModal((p) => ({
+        ...p, addingItem: false, newItemName: '', newItemPrice: '',
+        items: [...p.items, { itemId: newItem.id, itemName: newItem.name, unitPriceId: null, unitPrice: p.newItemPrice, memo: '' }],
+      }));
+    } catch (e) {
+      setUnitPriceModal((p) => ({ ...p, addingItem: false, error: getErrorMessage(e) }));
     }
   }
 
@@ -1186,37 +1245,114 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
             </div>
             {unitPriceModal.loading ? (
               <p className="py-6 text-center text-sm text-neutral-500">불러오는 중…</p>
-            ) : unitPriceModal.items.length === 0 ? (
-              <p className="py-6 text-center text-sm text-neutral-500">등록된 거래 품목이 없어.</p>
             ) : (
-              <div className="space-y-3">
-                {unitPriceModal.items.map((item, idx) => (
-                  <div key={item.itemId} className="rounded-2xl border border-neutral-200 p-3">
-                    <p className="mb-2 text-sm font-semibold">{item.itemName}</p>
-                    <div className="flex gap-2">
-                      <input
-                        type="number" inputMode="decimal" placeholder="단가"
-                        value={item.unitPrice}
-                        onChange={(e) => setUnitPriceModal((p) => {
-                          const items = [...p.items];
-                          items[idx] = { ...items[idx], unitPrice: e.target.value };
-                          return { ...p, items };
-                        })}
-                        className="flex-1 rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
-                      />
-                      <input
-                        placeholder="메모"
-                        value={item.memo}
-                        onChange={(e) => setUnitPriceModal((p) => {
-                          const items = [...p.items];
-                          items[idx] = { ...items[idx], memo: e.target.value };
-                          return { ...p, items };
-                        })}
-                        className="flex-1 rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
-                      />
+              <div className="space-y-4">
+                {/* 거래처 메모 섹션 */}
+                {unitPriceModal.companyId && (
+                  <div>
+                    <p className="mb-2 text-xs font-semibold text-neutral-500">거래처 메모</p>
+                    <div className="space-y-2">
+                      {unitPriceModal.companyMemos.map((memo) => (
+                        <div key={memo.id} className="rounded-2xl border border-neutral-100 bg-neutral-50 p-3">
+                          {unitPriceModal.editingMemoId === memo.id ? (
+                            <div className="flex gap-2">
+                              <input
+                                value={unitPriceModal.editingMemoContent}
+                                onChange={(e) => setUnitPriceModal((p) => ({ ...p, editingMemoContent: e.target.value }))}
+                                className="flex-1 rounded-xl border border-neutral-200 px-3 py-1.5 text-sm outline-none focus:border-neutral-400"
+                                autoFocus
+                              />
+                              <button onClick={() => void handleSaveMemo(memo.id)} className="rounded-xl bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white">저장</button>
+                              <button onClick={() => setUnitPriceModal((p) => ({ ...p, editingMemoId: null }))} className="rounded-xl border border-neutral-200 px-3 py-1.5 text-xs text-neutral-500">취소</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="flex-1 text-sm text-neutral-700">{memo.content}</p>
+                              <div className="flex gap-1 shrink-0">
+                                <button onClick={() => setUnitPriceModal((p) => ({ ...p, editingMemoId: memo.id, editingMemoContent: memo.content }))} className="text-xs text-neutral-400 underline">수정</button>
+                                <button onClick={() => void handleDeleteMemo(memo.id)} className="text-xs text-red-400 underline">삭제</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      <div className="flex gap-2">
+                        <input
+                          value={unitPriceModal.newMemoContent}
+                          onChange={(e) => setUnitPriceModal((p) => ({ ...p, newMemoContent: e.target.value }))}
+                          placeholder="새 메모 입력"
+                          className="flex-1 rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+                          onKeyDown={(e) => { if (e.key === 'Enter') void handleAddMemo(); }}
+                        />
+                        <button onClick={() => void handleAddMemo()} className="rounded-2xl bg-neutral-900 px-4 py-2 text-sm font-semibold text-white">추가</button>
+                      </div>
                     </div>
                   </div>
-                ))}
+                )}
+
+                {/* 단가 목록 */}
+                {unitPriceModal.items.length === 0 && !unitPriceModal.companyId ? (
+                  <p className="py-4 text-center text-sm text-neutral-500">등록된 거래 품목이 없어.</p>
+                ) : unitPriceModal.items.length > 0 ? (
+                  <div>
+                    <p className="mb-2 text-xs font-semibold text-neutral-500">단가</p>
+                    <div className="space-y-3">
+                      {unitPriceModal.items.map((item, idx) => (
+                        <div key={item.itemId} className="rounded-2xl border border-neutral-200 p-3">
+                          <p className="mb-2 text-sm font-semibold">{item.itemName}</p>
+                          <div className="flex gap-2">
+                            <input
+                              type="number" inputMode="decimal" placeholder="단가"
+                              value={item.unitPrice}
+                              onChange={(e) => setUnitPriceModal((p) => {
+                                const items = [...p.items];
+                                items[idx] = { ...items[idx], unitPrice: e.target.value };
+                                return { ...p, items };
+                              })}
+                              className="flex-1 rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                            />
+                            <input
+                              placeholder="메모"
+                              value={item.memo}
+                              onChange={(e) => setUnitPriceModal((p) => {
+                                const items = [...p.items];
+                                items[idx] = { ...items[idx], memo: e.target.value };
+                                return { ...p, items };
+                              })}
+                              className="flex-1 rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* + 품목 추가 */}
+                <div className="rounded-2xl border border-dashed border-neutral-300 p-3">
+                  <p className="mb-2 text-xs font-semibold text-neutral-500">+ 품목 추가</p>
+                  <div className="flex gap-2">
+                    <input
+                      placeholder="품목명"
+                      value={unitPriceModal.newItemName}
+                      onChange={(e) => setUnitPriceModal((p) => ({ ...p, newItemName: e.target.value }))}
+                      className="flex-1 rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+                    />
+                    <input
+                      type="number" inputMode="decimal" placeholder="단가"
+                      value={unitPriceModal.newItemPrice}
+                      onChange={(e) => setUnitPriceModal((p) => ({ ...p, newItemPrice: e.target.value }))}
+                      className="w-24 rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                    />
+                    <button
+                      onClick={() => void handleAddNewItem()}
+                      disabled={unitPriceModal.addingItem || !unitPriceModal.newItemName.trim()}
+                      className="rounded-xl bg-neutral-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      {unitPriceModal.addingItem ? '추가중' : '추가'}
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
             {unitPriceModal.error && (

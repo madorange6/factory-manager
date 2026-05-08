@@ -134,16 +134,13 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
   const DOW_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 
   // 정산 모달 열기
-  function openSettlementModal(log: InventoryLogRow) {
+  async function openSettlementModal(log: InventoryLogRow) {
     const item = inventoryMap.get(log.item_id);
-    setModal({
-      open: true,
-      log,
-      itemName: item?.name ?? '',
-      unitPrice: '',
-      saving: false,
-      error: '',
-    });
+    setModal({ open: true, log, itemName: item?.name ?? '', unitPrice: '', saving: false, error: '' });
+    if (item) {
+      const { data } = await supabase.from('unit_prices').select('unit_price').eq('inventory_item_id', item.id).maybeSingle();
+      if (data) setModal((p) => ({ ...p, unitPrice: String((data as { unit_price: number }).unit_price) }));
+    }
   }
 
   // 정산 저장
@@ -191,6 +188,8 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
       });
       if (itemError) throw itemError;
 
+      await supabase.from('inventory_logs').update({ is_settled: true }).eq('id', log.id);
+      await onRefreshLogs();
       setModal(EMPTY_MODAL);
       alert('정산이 저장됐어.');
     } catch (error) {
@@ -425,9 +424,12 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
                             {isIn ? '입고' : '출고'}
                           </span>
                         )}
-                        {!isProd && (
+                        {log.is_settled && (
+                          <span title="정산 완료" className="text-base leading-none">🔵</span>
+                        )}
+                        {!isProd && !log.is_settled && (
                           <button
-                            onClick={() => openSettlementModal(log)}
+                            onClick={() => void openSettlementModal(log)}
                             className="rounded-full border border-neutral-300 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
                           >
                             정산

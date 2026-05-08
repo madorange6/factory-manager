@@ -311,6 +311,7 @@ export default function ChatTab({
             const isReply = !!message.parent_id;
             const isUser = message.message_type === 'chat' || message.message_type === 'command';
             const isCommand = message.message_type === 'command';
+            const isSystemSource = message.source === 'system';
             const isImportant = !!message.is_important;
 
             const isSearchHit = search.open && search.query.trim() && search.resultIndices[search.currentIdx] === msgIdx;
@@ -333,7 +334,8 @@ export default function ChatTab({
                   )}
                   <div className={cn(
                     'rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm select-none',
-                    isUser && !isCommand && 'rounded-br-md bg-neutral-900 text-white',
+                    isUser && !isCommand && !isSystemSource && 'rounded-br-md bg-neutral-900 text-white',
+                    isUser && !isCommand && isSystemSource && 'rounded-br-md border border-teal-200 bg-teal-50 text-teal-900',
                     isCommand && 'rounded-br-md border border-blue-200 bg-blue-50 text-blue-900',
                     !isUser && 'rounded-bl-md border border-neutral-200 bg-white text-neutral-800',
                     isImportant && isUser && 'ring-2 ring-yellow-400',

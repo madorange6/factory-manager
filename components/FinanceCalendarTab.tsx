@@ -252,6 +252,18 @@ export default function FinanceCalendarTab() {
     await Promise.all([fetchInvoices(), fetchMonthPayments(year, month)]);
   }
 
+  async function handleCheckCf(cf: CashFlow, checked: boolean) {
+    if (!checked) {
+      if (!window.confirm('예정으로 되돌릴까요?')) return;
+    }
+    const newStatus = checked ? 'done' : 'planned';
+    const updates: Record<string, unknown> = { status: newStatus };
+    if (checked) updates.date = todayString();
+    const { error } = await supabase.from('cash_flows').update(updates).eq('id', cf.id);
+    if (error) { setErrorText(getErrorMessage(error)); return; }
+    await fetchCashFlows(year, month);
+  }
+
   // ── 달력 계산 ──
   const firstDay = new Date(year, month, 1);
   const lastDay = new Date(year, month + 1, 0);
@@ -703,7 +715,16 @@ export default function FinanceCalendarTab() {
                       return (
                         <div key={`cf-${cf.id}`} className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
                           <div className="flex items-center justify-between gap-2 mb-1">
-                            <p className="font-bold text-sm truncate flex-1">{cf.category || cf.memo || '★'}</p>
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <button
+                                onClick={() => void handleCheckCf(cf, false)}
+                                className="shrink-0 w-5 h-5 rounded border-2 border-emerald-400 bg-emerald-400 flex items-center justify-center"
+                                title="예정으로 되돌리기"
+                              >
+                                <span className="text-white text-xs leading-none">✓</span>
+                              </button>
+                              <p className="font-bold text-sm truncate">{cf.category || cf.memo || '★'}</p>
+                            </div>
                             <div className="flex items-center gap-1.5 shrink-0">
                               <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold', isIncome ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700')}>
                                 {isIncome ? '수금' : '지급'}
@@ -930,7 +951,14 @@ export default function FinanceCalendarTab() {
                       return (
                         <div key={`cf-${cf.id}`} className="rounded-2xl border border-blue-100 bg-blue-50 p-3">
                           <div className="flex items-center justify-between gap-2 mb-1">
-                            <p className="font-bold text-sm truncate flex-1">{cf.category || cf.memo || '★'}</p>
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <button
+                                onClick={() => void handleCheckCf(cf, true)}
+                                className="shrink-0 w-5 h-5 rounded border-2 border-blue-300 bg-white flex items-center justify-center"
+                                title="실행 완료로 표시"
+                              />
+                              <p className="font-bold text-sm truncate">{cf.category || cf.memo || '★'}</p>
+                            </div>
                             <div className="flex items-center gap-1.5 shrink-0">
                               {isRecurringRelated && (
                                 <span className="rounded-full bg-teal-100 px-1.5 py-0.5 text-[10px] font-semibold text-teal-700">반복</span>

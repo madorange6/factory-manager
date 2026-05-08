@@ -144,7 +144,7 @@ export default function QuickPanel({
 
   async function insertMessage(content: string, messageType: MessageRow['message_type']) {
     const { error } = await supabase.from('messages').insert({
-      content, message_type: messageType,
+      content, message_type: messageType, source: 'system',
       user_id: currentUserId, user_email: currentUserEmail, user_name: currentUserName,
     });
     if (error) throw error;
@@ -157,7 +157,7 @@ export default function QuickPanel({
     catch (e) { setMessages((prev) => prev.filter((m) => m.id !== temp.id)); throw e; }
   }
 
-  async function insertLog(itemId: number, action: 'in' | 'out', qty: number, note: string | null = null, logDate?: string) {
+  async function insertLog(itemId: number, action: 'in' | 'out', qty: number, note: string | null = null, logDate?: string, bagCount?: number | null, kgWeight?: number | null) {
     const { error } = await supabase.from('inventory_logs').insert({
       item_id: itemId,
       action,
@@ -169,6 +169,8 @@ export default function QuickPanel({
       user_name: currentUserName,
       company_id: quickPanel.companyId || null,
       company_name: quickPanel.companyName.trim() || null,
+      ...(bagCount != null && { bag_count: bagCount }),
+      ...(kgWeight != null && { kg_weight: kgWeight }),
     });
     if (error) throw error;
   }
@@ -400,7 +402,7 @@ export default function QuickPanel({
           }
           const newStock = action === '입고' ? currentStock + bagQty : currentStock - bagQty;
           await updateStock(found.id, newStock);
-          await insertLog(found.id, action === '입고' ? 'in' : 'out', bagQty, userMemo || null);
+          await insertLog(found.id, action === '입고' ? 'in' : 'out', bagQty, userMemo || null, undefined, bagQty, kgQty != null && kgQty > 0 ? kgQty : null);
           const kgText = kgQty !== null && kgQty > 0 ? `/${kgQty}kg` : '';
           results.push(`${found.name} ${bagQty}bag${kgText}`);
         }
