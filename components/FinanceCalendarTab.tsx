@@ -130,6 +130,9 @@ export default function FinanceCalendarTab() {
   const [plannedOpen, setPlannedOpen] = useState(false);
   const [partialPayForm, setPartialPayForm] = useState<PartialPayForm | null>(null);
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set());
+  const [categories, setCategories] = useState<string[]>([]);
+  const [categoryListOpen, setCategoryListOpen] = useState(false);
+  const [addCategoryPrompt, setAddCategoryPrompt] = useState<string | null>(null);
 
   // ── 패치 ──
   async function fetchInvoices() {
@@ -188,6 +191,11 @@ export default function FinanceCalendarTab() {
     setMonthPayments(result);
   }, []);
 
+  async function fetchCategories() {
+    const { data } = await supabase.from('cash_flow_categories').select('name').order('name');
+    if (data) setCategories((data as { name: string }[]).map((d) => d.name));
+  }
+
   async function ensureRecurringCashFlows(y: number, m: number) {
     const pad = (n: number) => String(n).padStart(2, '0');
     const { data: templates } = await supabase.from('cash_flows').select('*').eq('is_recurring', true);
@@ -225,6 +233,7 @@ export default function FinanceCalendarTab() {
           fetchCashFlows(today.getFullYear(), today.getMonth()),
           ensureRecurringCashFlows(today.getFullYear(), today.getMonth()),
           fetchMonthPayments(today.getFullYear(), today.getMonth()),
+          fetchCategories(),
         ]);
       } catch (e) { setErrorText(getErrorMessage(e)); }
       finally { setLoading(false); }
@@ -375,8 +384,14 @@ export default function FinanceCalendarTab() {
         }).eq('is_recurring', true).eq('recurring_day', editAllCf.recurring_day);
       }
       setEditAllCf(null);
-      setCfModal(EMPTY_CF_MODAL);
       await fetchCashFlows(year, month);
+      const trimmedCat = cfModal.category.trim();
+      if (trimmedCat && !categories.includes(trimmedCat)) {
+        setCfModal((p) => ({ ...p, saving: false }));
+        setAddCategoryPrompt(trimmedCat);
+      } else {
+        setCfModal(EMPTY_CF_MODAL);
+      }
     } catch (e) { setCfModal((p) => ({ ...p, saving: false, error: getErrorMessage(e) })); }
   }
 
@@ -1007,6 +1022,25 @@ export default function FinanceCalendarTab() {
                 <input placeholder="이자, 재비용, 기타수입 등" value={cfModal.category}
                   onChange={(e) => setCfModal((p) => ({ ...p, category: e.target.value }))}
                   className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400" />
+                {categories.length > 0 && (
+                  <div className="mt-1.5">
+                    <button type="button" onClick={() => setCategoryListOpen((o) => !o)}
+                      className="text-xs text-neutral-400">
+                      {categoryListOpen ? '▲ 목록 접기' : '▼ 목록에서 선택'}
+                    </button>
+                    {categoryListOpen && (
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {[...categories].sort((a, b) => a.localeCompare(b, 'ko')).map((cat) => (
+                          <button type="button" key={cat}
+                            onClick={() => { setCfModal((p) => ({ ...p, category: cat })); setCategoryListOpen(false); }}
+                            className={cn('rounded-full border px-3 py-1 text-xs', cfModal.category === cat ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-700')}>
+                            {cat}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div>
                 <p className="mb-1 text-xs text-neutral-500">메모 (선택)</p>
@@ -1036,6 +1070,35 @@ export default function FinanceCalendarTab() {
               <button onClick={() => void handleSaveCf()} disabled={cfModal.saving}
                 className="w-full rounded-2xl bg-neutral-900 px-4 py-4 text-sm font-semibold text-white disabled:opacity-50">
                 {cfModal.saving ? '저장중' : cfModal.editingId ? '수정 저장' : '추가'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 카테고리 목록 추가 확인 팝업 ── */}
+      {addCategoryPrompt && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
+          <div className="w-72 rounded-3xl bg-white p-6 shadow-xl">
+            <p className="text-sm font-bold mb-2">카테고리 추가</p>
+            <p className="text-sm text-neutral-600 mb-4">
+              <span className="font-semibold">'{addCategoryPrompt}'</span>을(를) 목록에 추가할까요?
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setAddCategoryPrompt(null); setCfModal(EMPTY_CF_MODAL); }}
+                className="flex-1 rounded-2xl border border-neutral-200 py-2.5 text-sm text-neutral-700">
+                이번만 사용
+              </button>
+              <button
+                onClick={async () => {
+                  await supabase.from('cash_flow_categories').insert({ name: addCategoryPrompt });
+                  await fetchCategories();
+                  setAddCategoryPrompt(null);
+                  setCfModal(EMPTY_CF_MODAL);
+                }}
+                className="flex-1 rounded-2xl bg-neutral-900 py-2.5 text-sm font-semibold text-white">
+                추가
               </button>
             </div>
           </div>
