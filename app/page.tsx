@@ -78,7 +78,7 @@ export default function Page() {
   }
 
   async function fetchMessages() {
-    const { data, error } = await supabase.from('messages').select('id, content, message_type, created_at, user_id, user_email, user_name').order('created_at', { ascending: false }).limit(200);
+    const { data, error } = await supabase.from('messages').select('id, content, message_type, created_at, user_id, user_email, user_name, is_important, parent_id').order('created_at', { ascending: false }).limit(200);
     if (error) throw error;
     setMessages(((data ?? []) as MessageRow[]).reverse());
   }

@@ -126,8 +126,8 @@ export default function FinanceCalendarTab() {
   const lastTapRef = useRef<{ id: number; time: number } | null>(null);
 
   // 17차 신규 상태
-  const [executedOpen, setExecutedOpen] = useState(true);
-  const [plannedOpen, setPlannedOpen] = useState(true);
+  const [executedOpen, setExecutedOpen] = useState(false);
+  const [plannedOpen, setPlannedOpen] = useState(false);
   const [partialPayForm, setPartialPayForm] = useState<PartialPayForm | null>(null);
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set());
 
@@ -557,7 +557,7 @@ export default function FinanceCalendarTab() {
             const isSelected = key === selectedDate;
             const dow = (startDow + day - 1) % 7;
             return (
-              <button key={key} onClick={() => setSelectedDate(isSelected ? null : key)}
+              <button key={key} onClick={() => { setSelectedDate(isSelected ? null : key); setExecutedOpen(false); setPlannedOpen(false); }}
                 className={cn('flex flex-col items-center justify-center rounded-2xl py-2 transition',
                   isSelected && 'bg-neutral-900',
                   !isSelected && isToday && 'border border-neutral-400',

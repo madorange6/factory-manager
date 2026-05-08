@@ -7,6 +7,13 @@ import { cn, formatChatDateTime, formatCurrency, getErrorMessage } from '../lib/
 
 const ADMIN_EMAIL = 'sj_advisory@naver.com';
 
+type SearchState = {
+  open: boolean;
+  query: string;
+  resultIndices: number[];
+  currentIdx: number;
+};
+
 type DollarTrigger = {
   step: 'company' | 'prices';
   search: string;
@@ -65,9 +72,11 @@ export default function ChatTab({
   const [contextMenu, setContextMenu] = useState<ContextMenu>(null);
   const [replyTo, setReplyTo] = useState<MessageRow | null>(null);
   const [dollarTrigger, setDollarTrigger] = useState<DollarTrigger>(null);
+  const [search, setSearch] = useState<SearchState>({ open: false, query: '', resultIndices: [], currentIdx: 0 });
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const messageRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   function scrollToBottom() {
     setTimeout(() => { chatBottomRef.current?.scrollIntoView({ behavior: 'auto' }); }, 80);
@@ -160,26 +169,65 @@ export default function ChatTab({
     }
   }
 
+  function escapeRegex(s: string) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  function highlightText(text: string, query: string): React.ReactNode {
+    if (!query.trim()) return text;
+    const parts = text.split(new RegExp(`(${escapeRegex(query)})`, 'gi'));
+    return parts.map((part, i) =>
+      part.toLowerCase() === query.toLowerCase()
+        ? <mark key={i} className="rounded bg-yellow-200 text-neutral-900">{part}</mark>
+        : part
+    );
+  }
+
+  function handleSearchChange(q: string) {
+    const indices: number[] = [];
+    organized.forEach((msg, idx) => {
+      if (q.trim() && msg.content.toLowerCase().includes(q.toLowerCase())) indices.push(idx);
+    });
+    setSearch({ open: true, query: q, resultIndices: indices, currentIdx: 0 });
+    if (indices.length > 0) {
+      setTimeout(() => messageRefs.current[indices[0]]?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+    }
+  }
+
+  function navigateSearch(dir: 1 | -1) {
+    setSearch((prev) => {
+      if (prev.resultIndices.length === 0) return prev;
+      const next = (prev.currentIdx + dir + prev.resultIndices.length) % prev.resultIndices.length;
+      setTimeout(() => messageRefs.current[prev.resultIndices[next]]?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+      return { ...prev, currentIdx: next };
+    });
+  }
+
+  function closeSearch() {
+    setSearch({ open: false, query: '', resultIndices: [], currentIdx: 0 });
+  }
+
   async function openDollarCompany(companyId: number | null, companyName: string) {
     setDollarTrigger({ step: 'prices', search: '', selectedCompanyId: companyId, selectedCompanyName: companyName, priceItems: [], loadingPrices: true });
     try {
+      // unit_prices 전체 로드
+      const { data: allPrices } = await supabase.from('unit_prices').select('inventory_item_id, unit_price');
+      const priceMap = new Map((allPrices ?? []).map((p: { inventory_item_id: number; unit_price: number }) => [p.inventory_item_id, p.unit_price]));
+
+      // 거래처 연관 품목 (inventory_logs 기반)
       let query = supabase.from('inventory_logs').select('item_id').not('item_id', 'is', null);
       if (companyId) query = query.eq('company_id', companyId);
       else query = query.eq('company_name', companyName);
       const { data: logData } = await query;
-      const itemIds = [...new Set((logData ?? []).map((l: { item_id: number }) => l.item_id).filter(Boolean))];
+      let itemIds = [...new Set((logData ?? []).map((l: { item_id: number }) => l.item_id).filter(Boolean))];
+
+      // inventory_logs에 없으면 unit_prices 등록된 품목 전체로 fallback
+      if (itemIds.length === 0) itemIds = [...priceMap.keys()];
 
       if (itemIds.length === 0) {
         setDollarTrigger((p) => p ? { ...p, loadingPrices: false, priceItems: [] } : null);
         return;
       }
 
-      const [{ data: itemData }, { data: priceData }] = await Promise.all([
-        supabase.from('inventory_items').select('id, name').in('id', itemIds).order('name'),
-        supabase.from('unit_prices').select('inventory_item_id, unit_price').in('inventory_item_id', itemIds),
-      ]);
-
-      const priceMap = new Map((priceData ?? []).map((p: { inventory_item_id: number; unit_price: number }) => [p.inventory_item_id, p.unit_price]));
+      const { data: itemData } = await supabase.from('inventory_items').select('id, name').in('id', itemIds).order('name');
       const priceItems = (itemData ?? []).map((item: { id: number; name: string }) => ({
         itemId: item.id,
         itemName: item.name,
@@ -250,6 +298,27 @@ export default function ChatTab({
       )}
 
       <div className="flex-1 overflow-y-auto px-3 py-4 pb-[180px]">
+        {/* 검색바 */}
+        {search.open && (
+          <div className="sticky top-0 z-10 mb-3 flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-3 py-2 shadow-sm">
+            <input
+              autoFocus
+              value={search.query}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder="메시지 검색"
+              className="flex-1 rounded-xl border border-neutral-200 px-3 py-1.5 text-sm outline-none focus:border-neutral-400"
+            />
+            {search.query.trim() && (
+              <span className="shrink-0 text-xs text-neutral-500">
+                {search.resultIndices.length > 0 ? `${search.currentIdx + 1}/${search.resultIndices.length}` : '없음'}
+              </span>
+            )}
+            <button onClick={() => navigateSearch(-1)} className="shrink-0 rounded-lg border border-neutral-200 px-2 py-1 text-xs text-neutral-600">↑</button>
+            <button onClick={() => navigateSearch(1)} className="shrink-0 rounded-lg border border-neutral-200 px-2 py-1 text-xs text-neutral-600">↓</button>
+            <button onClick={closeSearch} className="shrink-0 text-sm font-bold text-neutral-400">✕</button>
+          </div>
+        )}
+
         <div className="mb-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
           <p className="text-sm font-semibold">빠른 사용법</p>
           <p className="mt-1 text-xs leading-5 text-neutral-500">⚡ 버튼 또는 / 입력으로 빠른입력 열기</p>
@@ -258,16 +327,18 @@ export default function ChatTab({
         </div>
 
         <div className="space-y-3">
-          {organized.map((message) => {
+          {organized.map((message, msgIdx) => {
             const isReply = !!message.parent_id;
             const isUser = message.message_type === 'chat' || message.message_type === 'command';
             const isCommand = message.message_type === 'command';
             const isImportant = !!message.is_important;
 
+            const isSearchHit = search.open && search.query.trim() && search.resultIndices[search.currentIdx] === msgIdx;
             return (
               <div
                 key={message.id}
-                className={cn('flex', isUser ? 'justify-end' : 'justify-start', isReply && 'pl-6')}
+                ref={(el) => { messageRefs.current[msgIdx] = el; }}
+                className={cn('flex', isUser ? 'justify-end' : 'justify-start', isReply && 'pl-6', isSearchHit && 'ring-2 ring-yellow-400 rounded-2xl')}
                 onMouseDown={() => startLongPress(message)}
                 onMouseUp={cancelLongPress}
                 onMouseLeave={cancelLongPress}
@@ -304,7 +375,7 @@ export default function ChatTab({
                     {message.content.startsWith('https://') && message.content.includes('chat-images') ? (
                       <img src={message.content} alt="uploaded" className="max-w-full rounded-xl" />
                     ) : (
-                      <p className="break-words whitespace-pre-wrap">{message.content}</p>
+                      <p className="break-words whitespace-pre-wrap">{search.open && search.query.trim() ? highlightText(message.content, search.query) : message.content}</p>
                     )}
                   </div>
                   <p className={cn('mt-1 px-1 text-[11px] text-neutral-400', isUser ? 'text-right' : 'text-left')}>
@@ -339,6 +410,14 @@ export default function ChatTab({
 
         <div className="rounded-3xl border border-neutral-200 bg-white p-2 shadow-lg">
           <div className="flex items-end gap-2">
+            <button
+              onClick={() => setSearch((p) => p.open ? { open: false, query: '', resultIndices: [], currentIdx: 0 } : { ...p, open: true })}
+              type="button"
+              className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border text-lg', search.open ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50')}
+              aria-label="검색"
+            >
+              🔍
+            </button>
             <label className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-50 text-lg">
               <span>📷</span>
               <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleImageUpload(f); e.target.value = ''; }} />

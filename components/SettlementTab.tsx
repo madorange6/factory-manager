@@ -422,12 +422,13 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
     try {
       setUnitPriceModal((p) => ({ ...p, saving: true, error: '' }));
       for (const item of toSave) {
-        await supabase.from('unit_prices').upsert({
+        const { error } = await supabase.from('unit_prices').upsert({
           inventory_item_id: item.itemId,
           unit_price: Number(item.unitPrice),
           memo: item.memo.trim() || null,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'inventory_item_id' });
+        if (error) throw error;
       }
       setUnitPriceModal(EMPTY_UNIT_PRICE_MODAL);
     } catch (e) {
