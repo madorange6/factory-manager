@@ -390,13 +390,15 @@ export default function ChatTab({
             <button onClick={closeSearch} className="shrink-0 text-sm font-bold text-neutral-400">✕</button>
           </div>
         )}
-        {currentUserEmail === ADMIN_EMAIL && (
-          <div className="mb-2 flex justify-end">
-            <button onClick={() => void handleClearMessages()} className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
-              채팅 초기화
-            </button>
-          </div>
-        )}
+        <div className="mb-2 flex justify-end">
+          <button
+            onClick={() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 bg-white shadow-sm text-neutral-600"
+            aria-label="최신 메시지로 이동"
+          >
+            ↓
+          </button>
+        </div>
 
         {/* 항목 5: 댓글 대상 표시 */}
         {replyTo && (
