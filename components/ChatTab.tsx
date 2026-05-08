@@ -298,26 +298,6 @@ export default function ChatTab({
       )}
 
       <div className="flex-1 overflow-y-auto px-3 py-4 pb-[180px]">
-        {/* 검색바 */}
-        {search.open && (
-          <div className="sticky top-0 z-10 mb-3 flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-3 py-2 shadow-sm">
-            <input
-              autoFocus
-              value={search.query}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              placeholder="메시지 검색"
-              className="flex-1 rounded-xl border border-neutral-200 px-3 py-1.5 text-sm outline-none focus:border-neutral-400"
-            />
-            {search.query.trim() && (
-              <span className="shrink-0 text-xs text-neutral-500">
-                {search.resultIndices.length > 0 ? `${search.currentIdx + 1}/${search.resultIndices.length}` : '없음'}
-              </span>
-            )}
-            <button onClick={() => navigateSearch(-1)} className="shrink-0 rounded-lg border border-neutral-200 px-2 py-1 text-xs text-neutral-600">↑</button>
-            <button onClick={() => navigateSearch(1)} className="shrink-0 rounded-lg border border-neutral-200 px-2 py-1 text-xs text-neutral-600">↓</button>
-            <button onClick={closeSearch} className="shrink-0 text-sm font-bold text-neutral-400">✕</button>
-          </div>
-        )}
 
         <div className="mb-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
           <p className="text-sm font-semibold">빠른 사용법</p>
@@ -390,6 +370,26 @@ export default function ChatTab({
       </div>
 
       <div className="fixed bottom-[72px] left-1/2 z-20 w-full max-w-md -translate-x-1/2 bg-gradient-to-t from-neutral-50 via-neutral-50 to-transparent px-3 pb-3 pt-4">
+        {/* 검색바 */}
+        {search.open && (
+          <div className="mb-2 flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-3 py-2 shadow-sm">
+            <input
+              autoFocus
+              value={search.query}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder="메시지 검색"
+              className="flex-1 rounded-xl border border-neutral-200 px-3 py-1.5 text-sm outline-none focus:border-neutral-400"
+            />
+            {search.query.trim() && (
+              <span className="shrink-0 text-xs text-neutral-500">
+                {search.resultIndices.length > 0 ? `${search.currentIdx + 1}/${search.resultIndices.length}` : '없음'}
+              </span>
+            )}
+            <button onClick={() => navigateSearch(-1)} className="shrink-0 rounded-lg border border-neutral-200 px-2 py-1 text-xs text-neutral-600">↑</button>
+            <button onClick={() => navigateSearch(1)} className="shrink-0 rounded-lg border border-neutral-200 px-2 py-1 text-xs text-neutral-600">↓</button>
+            <button onClick={closeSearch} className="shrink-0 text-sm font-bold text-neutral-400">✕</button>
+          </div>
+        )}
         {currentUserEmail === ADMIN_EMAIL && (
           <div className="mb-2 flex justify-end">
             <button onClick={() => void handleClearMessages()} className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
@@ -433,7 +433,7 @@ export default function ChatTab({
                 if (v.trim() === '/') { setInput(''); onOpenQuickPanel(); return; }
                 if (v.trim() === '$') { setInput(''); setDollarTrigger({ step: 'company', search: '', selectedCompanyId: null, selectedCompanyName: '', priceItems: [], loadingPrices: false }); }
               }}
-              placeholder={replyTo ? '댓글 입력…' : '메시지 입력 또는 ⚡로 빠른입력'}
+              placeholder={replyTo ? '댓글 입력…' : '메시지 입력'}
               rows={1}
               className="max-h-32 min-h-[44px] flex-1 resize-none rounded-2xl border-0 bg-transparent px-3 py-2 text-sm outline-none placeholder:text-neutral-400"
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void handleSend(); } }}
