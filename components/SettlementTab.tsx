@@ -752,8 +752,25 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
         ))}
       </div>
 
+      {/* 상태 필터 + 거래처 검색 */}
+      <div className="mb-2 space-y-2">
+        <div className="flex gap-2">
+          {(['all', 'pending', 'done'] as StatusFilter[]).map((f) => (
+            <button key={f} onClick={() => setStatusFilter(f)} className={cn('flex-1 rounded-2xl border py-2 text-sm font-medium', statusFilter === f ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-600')}>
+              {f === 'all' ? '전체' : f === 'pending' ? '미처리' : '완료'}
+            </button>
+          ))}
+        </div>
+        <input
+          value={companySearch}
+          onChange={(e) => setCompanySearch(e.target.value)}
+          placeholder="거래처 검색"
+          className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+        />
+      </div>
+
       {/* 계산서 필터 [전체][발행][예정][미발행] */}
-      <div className="mb-2 flex gap-1.5">
+      <div className="mb-3 flex gap-1.5">
         {([['all', '전체'], ['issued', '발행'], ['scheduled', '예정'], ['none', '미발행']] as [InvoiceStatusFilter, string][]).map(([val, label]) => (
           <button
             key={val}
@@ -770,23 +787,6 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
             {label}
           </button>
         ))}
-      </div>
-
-      {/* 상태 필터 + 거래처 검색 */}
-      <div className="mb-3 space-y-2">
-        <div className="flex gap-2">
-          {(['all', 'pending', 'done'] as StatusFilter[]).map((f) => (
-            <button key={f} onClick={() => setStatusFilter(f)} className={cn('flex-1 rounded-2xl border py-2 text-sm font-medium', statusFilter === f ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-600')}>
-              {f === 'all' ? '전체' : f === 'pending' ? '미처리' : '완료'}
-            </button>
-          ))}
-        </div>
-        <input
-          value={companySearch}
-          onChange={(e) => setCompanySearch(e.target.value)}
-          placeholder="거래처 검색"
-          className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
-        />
       </div>
 
       <button onClick={openNewForm} className="mb-4 w-full rounded-2xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white">
