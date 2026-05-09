@@ -131,6 +131,7 @@ export default function QuickPanel({
   }, [quickPanel, existingProductionTargetItem]);
 
   function createTempMessage(content: string, messageType: MessageRow['message_type']): MessageRow {
+    const source: MessageRow['source'] = messageType === 'chat' ? 'quick_input' : 'system';
     return {
       id: -Date.now() - Math.floor(Math.random() * 1000),
       content,
@@ -139,13 +140,14 @@ export default function QuickPanel({
       user_id: currentUserId,
       user_email: currentUserEmail,
       user_name: currentUserName,
-      source: 'system',
+      source,
     };
   }
 
   async function insertMessage(content: string, messageType: MessageRow['message_type']) {
+    const source: MessageRow['source'] = messageType === 'chat' ? 'quick_input' : 'system';
     const { error } = await supabase.from('messages').insert({
-      content, message_type: messageType, source: 'system',
+      content, message_type: messageType, source,
       user_id: currentUserId, user_email: currentUserEmail, user_name: currentUserName,
     });
     if (error) throw error;

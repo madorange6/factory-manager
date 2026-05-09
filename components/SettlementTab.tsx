@@ -387,7 +387,8 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
     const last = lastStarTapRef.current;
     if (last && last.name === companyName && now - last.time < 400) {
       lastStarTapRef.current = null;
-      void openUnitPriceModal(companyName, companyId);
+      const resolvedId = companyId ?? companies.find((c) => c.name === companyName)?.id ?? null;
+      void openUnitPriceModal(companyName, resolvedId);
     } else {
       lastStarTapRef.current = { name: companyName, time: now };
     }
@@ -396,11 +397,18 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
   async function openUnitPriceModal(companyName: string, companyId: number | null) {
     setUnitPriceModal({ ...EMPTY_UNIT_PRICE_MODAL, open: true, companyId, companyName, loading: true });
     try {
-      let query = supabase.from('inventory_logs').select('item_id').not('item_id', 'is', null);
-      if (companyId) query = query.eq('company_id', companyId);
-      else query = query.eq('company_name', companyName);
-      const { data: logData } = await query;
-      const itemIds = [...new Set((logData ?? []).map((l: { item_id: number }) => l.item_id).filter(Boolean))];
+      let logRows: { item_id: number }[];
+      if (companyId) {
+        const [{ data: d1 }, { data: d2 }] = await Promise.all([
+          supabase.from('inventory_logs').select('item_id').not('item_id', 'is', null).eq('company_id', companyId),
+          supabase.from('inventory_logs').select('item_id').not('item_id', 'is', null).is('company_id', null).eq('company_name', companyName),
+        ]);
+        logRows = [...(d1 ?? []), ...(d2 ?? [])] as { item_id: number }[];
+      } else {
+        const { data } = await supabase.from('inventory_logs').select('item_id').not('item_id', 'is', null).eq('company_name', companyName);
+        logRows = (data ?? []) as { item_id: number }[];
+      }
+      const itemIds = [...new Set(logRows.map((l) => l.item_id).filter(Boolean))];
 
       const [itemData, priceData, memoData] = await Promise.all([
         itemIds.length > 0

@@ -23,7 +23,7 @@ export type MessageRow = {
   user_name?: string | null;
   is_important?: boolean | null;
   parent_id?: number | null;
-  source?: 'user' | 'system' | null;
+  source?: 'user' | 'system' | 'quick_input' | null;
 };
 
 export type InventoryLogRow = {

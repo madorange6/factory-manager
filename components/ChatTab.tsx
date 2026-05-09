@@ -102,6 +102,7 @@ export default function ChatTab({
     const { error } = await supabase.from('messages').insert({
       content,
       message_type: messageType,
+      source: 'user',
       user_id: currentUserId,
       user_email: currentUserEmail,
       user_name: currentUserName,
@@ -312,6 +313,7 @@ export default function ChatTab({
             const isUser = message.message_type === 'chat' || message.message_type === 'command';
             const isCommand = message.message_type === 'command';
             const isSystemSource = message.source === 'system';
+            const isQuickInput = message.source === 'quick_input';
             const isImportant = !!message.is_important;
 
             const isSearchHit = search.open && search.query.trim() && search.resultIndices[search.currentIdx] === msgIdx;
@@ -334,8 +336,9 @@ export default function ChatTab({
                   )}
                   <div className={cn(
                     'rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm select-none',
-                    isUser && !isCommand && !isSystemSource && 'rounded-br-md bg-neutral-900 text-white',
+                    isUser && !isCommand && !isSystemSource && !isQuickInput && 'rounded-br-md bg-neutral-900 text-white',
                     isUser && !isCommand && isSystemSource && 'rounded-br-md border border-teal-200 bg-teal-50 text-teal-900',
+                    isUser && !isCommand && isQuickInput && 'rounded-br-md border border-neutral-300 bg-neutral-100 text-neutral-700',
                     isCommand && 'rounded-br-md border border-blue-200 bg-blue-50 text-blue-900',
                     !isUser && 'rounded-bl-md border border-neutral-200 bg-white text-neutral-800',
                     isImportant && isUser && 'ring-2 ring-yellow-400',
