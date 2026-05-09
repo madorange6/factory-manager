@@ -124,6 +124,7 @@ export default function FinanceCalendarTab() {
 
   const [invoiceEdit, setInvoiceEdit] = useState<InvoiceEditSheet>(EMPTY_INVOICE_EDIT);
   const lastTapRef = useRef<{ id: number; time: number } | null>(null);
+  const lastPaymentTapRef = useRef<{ id: number; time: number } | null>(null);
 
   // 17차 신규 상태
   const [executedOpen, setExecutedOpen] = useState(false);
@@ -443,6 +444,26 @@ export default function FinanceCalendarTab() {
     } catch (e) { setErrorText(getErrorMessage(e)); }
   }
 
+  async function handleRevertPayment(paymentId: number) {
+    try {
+      const { error } = await supabase.from('payments').delete().eq('id', paymentId);
+      if (error) throw error;
+      await refreshAfterPayment();
+    } catch (e) { setErrorText(getErrorMessage(e)); }
+  }
+
+  function handlePaymentNameTap(paymentId: number) {
+    const now = Date.now();
+    const last = lastPaymentTapRef.current;
+    if (last && last.id === paymentId && now - last.time < 400) {
+      lastPaymentTapRef.current = null;
+      if (!window.confirm('예정으로 되돌릴까요?')) return;
+      void handleRevertPayment(paymentId);
+    } else {
+      lastPaymentTapRef.current = { id: paymentId, time: now };
+    }
+  }
+
   // invoice 더블탭 수정
   function handleInvoiceTap(inv: InvoiceWithDetails) {
     const now = Date.now();
@@ -666,6 +687,7 @@ export default function FinanceCalendarTab() {
                     )}
 
                     {/* payments 아이템 */}
+                    <p className="text-[11px] text-neutral-400">거래처명 더블탭 → 예정으로 되돌리기</p>
                     {sortByDirThenName(
                       executedPayments,
                       (p) => p.invoiceDirection,
@@ -675,7 +697,11 @@ export default function FinanceCalendarTab() {
                       return (
                         <div key={`pay-${p.id}`} className="rounded-2xl border border-green-100 bg-green-50 p-3">
                           <div className="flex items-center justify-between gap-2 mb-1">
-                            <p className="font-bold text-sm truncate flex-1">{p.invoiceCompanyName}</p>
+                            <p
+                              className="font-bold text-sm truncate flex-1 cursor-pointer select-none"
+                              onDoubleClick={() => { if (window.confirm('예정으로 되돌릴까요?')) void handleRevertPayment(p.id); }}
+                              onTouchEnd={() => handlePaymentNameTap(p.id)}
+                            >{p.invoiceCompanyName}</p>
                             <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold shrink-0', p.invoiceDirection === 'receivable' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700')}>
                               {p.invoiceDirection === 'receivable' ? '수금' : '지급'}
                             </span>
@@ -715,33 +741,39 @@ export default function FinanceCalendarTab() {
                       return (
                         <div key={`cf-${cf.id}`} className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
                           <div className="flex items-center justify-between gap-2 mb-1">
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <button
-                                onClick={() => void handleCheckCf(cf, false)}
-                                className="shrink-0 w-5 h-5 rounded border-2 border-emerald-400 bg-emerald-400 flex items-center justify-center"
-                                title="예정으로 되돌리기"
-                              >
-                                <span className="text-white text-xs leading-none">✓</span>
-                              </button>
-                              <p className="font-bold text-sm truncate">{cf.category || cf.memo || '★'}</p>
-                            </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold', isIncome ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700')}>
-                                {isIncome ? '수금' : '지급'}
-                              </span>
-                              <span className="font-bold text-sm text-emerald-700">
-                                {isIncome ? '+' : ''}{formatCurrency(Number(cf.amount))}원
-                              </span>
-                            </div>
+                            <p className="font-bold text-sm truncate flex-1">{cf.category || cf.memo || '★'}</p>
+                            <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold shrink-0', isIncome ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700')}>
+                              {isIncome ? '수금' : '지급'}
+                            </span>
                           </div>
-                          {cf.memo && cf.category && <p className="text-xs text-emerald-700">{cf.memo}</p>}
-                          <div className="mt-2 flex gap-2 justify-end">
-                            <button onClick={() => openEditCf(cf)}
-                              className="rounded-xl border border-emerald-200 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-700">수정</button>
-                            <button onClick={() => void handleDeleteCf(cf.id)} disabled={deletingCfId === cf.id}
-                              className="rounded-xl border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 disabled:opacity-50">
-                              {deletingCfId === cf.id ? '삭제중' : '삭제'}
+                          <div className="space-y-0.5 text-xs text-neutral-600">
+                            <div className="flex justify-between">
+                              <span>금액</span>
+                              <span className={cn('font-semibold', isIncome ? 'text-emerald-700' : 'text-red-700')}>
+                                {isIncome ? '+' : '-'}{formatCurrency(Math.abs(Number(cf.amount)))}원
+                              </span>
+                            </div>
+                            {cf.memo && cf.category && <p className="text-emerald-700 mt-0.5">{cf.memo}</p>}
+                          </div>
+                          <div className="mt-2 flex items-center justify-between">
+                            <button
+                              onClick={() => void handleCheckCf(cf, false)}
+                              className="flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-700"
+                              title="예정으로 되돌리기"
+                            >
+                              <span className="w-4 h-4 rounded border-2 border-emerald-400 bg-emerald-400 flex items-center justify-center shrink-0">
+                                <span className="text-white text-[10px] leading-none">✓</span>
+                              </span>
+                              예정으로
                             </button>
+                            <div className="flex gap-2">
+                              <button onClick={() => openEditCf(cf)}
+                                className="rounded-xl border border-emerald-200 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-700">수정</button>
+                              <button onClick={() => void handleDeleteCf(cf.id)} disabled={deletingCfId === cf.id}
+                                className="rounded-xl border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 disabled:opacity-50">
+                                {deletingCfId === cf.id ? '삭제중' : '삭제'}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );
@@ -950,15 +982,8 @@ export default function FinanceCalendarTab() {
                       const isRecurringRelated = cf.is_recurring || cf.recurring_day != null;
                       return (
                         <div key={`cf-${cf.id}`} className="rounded-2xl border border-blue-100 bg-blue-50 p-3">
-                          <div className="flex items-center justify-between gap-2 mb-1">
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <button
-                                onClick={() => void handleCheckCf(cf, true)}
-                                className="shrink-0 w-5 h-5 rounded border-2 border-blue-300 bg-white flex items-center justify-center"
-                                title="실행 완료로 표시"
-                              />
-                              <p className="font-bold text-sm truncate">{cf.category || cf.memo || '★'}</p>
-                            </div>
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <p className="font-bold text-sm truncate flex-1">{cf.category || cf.memo || '★'}</p>
                             <div className="flex items-center gap-1.5 shrink-0">
                               {isRecurringRelated && (
                                 <span className="rounded-full bg-teal-100 px-1.5 py-0.5 text-[10px] font-semibold text-teal-700">반복</span>
@@ -966,13 +991,23 @@ export default function FinanceCalendarTab() {
                               <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold', isIncome ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700')}>
                                 {isIncome ? '수금' : '지급'}
                               </span>
-                              <span className="font-bold text-sm text-blue-700">
-                                {isIncome ? '+' : ''}{formatCurrency(Number(cf.amount))}원
-                              </span>
+                              <button
+                                onClick={() => void handleCheckCf(cf, true)}
+                                className="w-5 h-5 rounded border-2 border-blue-300 bg-white flex items-center justify-center shrink-0"
+                                title="실행 완료로 표시"
+                              />
                             </div>
                           </div>
-                          {cf.memo && cf.category && <p className="text-xs text-blue-600">{cf.memo}</p>}
-                          <div className="mt-2 flex gap-2 justify-end">
+                          <div className="space-y-0.5 text-xs text-neutral-600 mb-2">
+                            <div className="flex justify-between">
+                              <span>금액</span>
+                              <span className={cn('font-semibold', isIncome ? 'text-emerald-700' : 'text-red-700')}>
+                                {isIncome ? '+' : '-'}{formatCurrency(Math.abs(Number(cf.amount)))}원
+                              </span>
+                            </div>
+                            {cf.memo && cf.category && <p className="text-blue-600">{cf.memo}</p>}
+                          </div>
+                          <div className="flex gap-2 justify-end">
                             <button onClick={() => openEditCf(cf)}
                               className="rounded-xl border border-blue-200 bg-white px-2.5 py-1 text-xs font-semibold text-blue-700">수정</button>
                             <button onClick={() => void handleDeleteCf(cf.id)} disabled={deletingCfId === cf.id}

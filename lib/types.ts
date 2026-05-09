@@ -134,6 +134,7 @@ export type InOutItem = {
   itemName: string;
   bagQty: string;
   kgQty: string;
+  itemCategory: InventoryCategory | null;
 };
 
 export type QuickPanelState = {

@@ -57,6 +57,8 @@ type UnitPriceModal = {
   newItemName: string;
   newItemPrice: string;
   addingItem: boolean;
+  editingItemId: number | null;
+  editingItemName: string;
 };
 
 const EMPTY_UNIT_PRICE_MODAL: UnitPriceModal = {
@@ -65,6 +67,7 @@ const EMPTY_UNIT_PRICE_MODAL: UnitPriceModal = {
   companyMemos: [], newMemoContent: '',
   editingMemoId: null, editingMemoContent: '',
   newItemName: '', newItemPrice: '', addingItem: false,
+  editingItemId: null, editingItemName: '',
 };
 
 type PaymentModal = {
@@ -493,6 +496,26 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
     } catch (e) {
       setUnitPriceModal((p) => ({ ...p, addingItem: false, error: getErrorMessage(e) }));
     }
+  }
+
+  async function handleRenameItem(itemId: number, newName: string) {
+    if (!newName.trim()) return;
+    const { error } = await supabase.from('inventory_items').update({ name: newName.trim() }).eq('id', itemId);
+    if (error) { setUnitPriceModal((p) => ({ ...p, error: getErrorMessage(error) })); return; }
+    setUnitPriceModal((p) => ({
+      ...p,
+      editingItemId: null,
+      editingItemName: '',
+      items: p.items.map((item) => item.itemId === itemId ? { ...item, itemName: newName.trim() } : item),
+    }));
+  }
+
+  async function handleDeleteItem(itemId: number, itemName: string) {
+    if (!window.confirm(`'${itemName}' 품목을 삭제할까요?\n연관 단가도 함께 삭제됩니다.`)) return;
+    await supabase.from('unit_prices').delete().eq('inventory_item_id', itemId);
+    const { error } = await supabase.from('inventory_items').delete().eq('id', itemId);
+    if (error) { setUnitPriceModal((p) => ({ ...p, error: getErrorMessage(error) })); return; }
+    setUnitPriceModal((p) => ({ ...p, items: p.items.filter((item) => item.itemId !== itemId) }));
   }
 
   async function setDueDate(inv: InvoiceWithItems, due_date: string | null) {
@@ -1299,7 +1322,33 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
                     <div className="space-y-3">
                       {unitPriceModal.items.map((item, idx) => (
                         <div key={item.itemId} className="rounded-2xl border border-neutral-200 p-3">
-                          <p className="mb-2 text-sm font-semibold">{item.itemName}</p>
+                          {unitPriceModal.editingItemId === item.itemId ? (
+                            <div className="flex gap-2 mb-2">
+                              <input
+                                value={unitPriceModal.editingItemName}
+                                onChange={(e) => setUnitPriceModal((p) => ({ ...p, editingItemName: e.target.value }))}
+                                className="flex-1 rounded-xl border border-neutral-200 px-3 py-1.5 text-sm outline-none focus:border-neutral-400"
+                                autoFocus
+                                onKeyDown={(e) => { if (e.key === 'Enter') void handleRenameItem(item.itemId, unitPriceModal.editingItemName); }}
+                              />
+                              <button onClick={() => void handleRenameItem(item.itemId, unitPriceModal.editingItemName)} className="rounded-xl bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white">저장</button>
+                              <button onClick={() => setUnitPriceModal((p) => ({ ...p, editingItemId: null }))} className="rounded-xl border border-neutral-200 px-2 py-1.5 text-xs text-neutral-500">취소</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-sm font-semibold">{item.itemName}</p>
+                              <div className="flex gap-1">
+                                <button
+                                  onClick={() => setUnitPriceModal((p) => ({ ...p, editingItemId: item.itemId, editingItemName: item.itemName }))}
+                                  className="rounded-lg border border-neutral-200 px-2 py-0.5 text-xs text-neutral-600"
+                                >수정</button>
+                                <button
+                                  onClick={() => void handleDeleteItem(item.itemId, item.itemName)}
+                                  className="rounded-lg border border-red-200 bg-red-50 px-2 py-0.5 text-xs text-red-600"
+                                >삭제</button>
+                              </div>
+                            </div>
+                          )}
                           <div className="flex gap-2">
                             <input
                               type="number" inputMode="decimal" placeholder="단가"

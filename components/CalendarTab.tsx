@@ -454,7 +454,14 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
                     {/* 하단: 품목명 + 수량 */}
                     <p className="text-sm text-neutral-700">
                       {item?.name ?? `품목#${log.item_id}`}
-                      <span className="ml-2 font-semibold">{qty.toLocaleString()}{unit}</span>
+                      <span className="ml-2 font-semibold">
+                        {log.bag_count != null || log.kg_weight != null
+                          ? [
+                              log.bag_count != null ? `${log.bag_count}bag` : null,
+                              log.kg_weight != null ? `${log.kg_weight}kg` : null,
+                            ].filter(Boolean).join(' / ')
+                          : `${qty.toLocaleString()}${unit}`}
+                      </span>
                     </p>
 
                     {/* 부가 정보 */}
