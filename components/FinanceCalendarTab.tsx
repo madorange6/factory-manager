@@ -149,7 +149,7 @@ export default function FinanceCalendarTab() {
   const fetchCashFlows = useCallback(async (y: number, m: number) => {
     const pad = (n: number) => String(n).padStart(2, '0');
     const from = `${y}-${pad(m + 1)}-01`;
-    const to = `${y}-${pad(m + 1)}-31`;
+    const to = `${y}-${pad(m + 1)}-${pad(new Date(y, m + 1, 0).getDate())}`;
     const { data, error } = await supabase
       .from('cash_flows').select('*')
       .gte('date', from).lte('date', to)
@@ -161,7 +161,7 @@ export default function FinanceCalendarTab() {
   const fetchMonthPayments = useCallback(async (y: number, m: number) => {
     const pad = (n: number) => String(n).padStart(2, '0');
     const from = `${y}-${pad(m + 1)}-01`;
-    const to = `${y}-${pad(m + 1)}-31`;
+    const to = `${y}-${pad(m + 1)}-${pad(new Date(y, m + 1, 0).getDate())}`;
     const { data, error } = await supabase
       .from('payments')
       .select(`
@@ -203,7 +203,7 @@ export default function FinanceCalendarTab() {
     if (!templates || templates.length === 0) return;
 
     const from = `${y}-${pad(m + 1)}-01`;
-    const to = `${y}-${pad(m + 1)}-31`;
+    const to = `${y}-${pad(m + 1)}-${pad(new Date(y, m + 1, 0).getDate())}`;
     const { data: existing } = await supabase.from('cash_flows').select('recurring_day, date').gte('date', from).lte('date', to);
 
     const existingDays = new Set(

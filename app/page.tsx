@@ -78,7 +78,7 @@ export default function Page() {
   }
 
   async function fetchMessages() {
-    const { data, error } = await supabase.from('messages').select('id, content, message_type, created_at, user_id, user_email, user_name, is_important, parent_id').order('created_at', { ascending: false }).limit(200);
+    const { data, error } = await supabase.from('messages').select('id, content, message_type, source, created_at, user_id, user_email, user_name, is_important, parent_id').order('created_at', { ascending: false }).limit(200);
     if (error) throw error;
     setMessages(((data ?? []) as MessageRow[]).reverse());
   }
@@ -86,7 +86,7 @@ export default function Page() {
   async function fetchLogs() {
     const { data, error } = await supabase
       .from('inventory_logs')
-      .select('id, item_id, action, qty, created_at, date, note, user_id, user_email, user_name, company_id, company_name')
+      .select('id, item_id, action, qty, created_at, date, note, user_id, user_email, user_name, company_id, company_name, is_settled, bag_count, kg_weight')
       .order('created_at', { ascending: false });
     if (error) throw error;
     setLogs((data ?? []) as InventoryLogRow[]);

@@ -424,15 +424,18 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
                             {isIn ? '입고' : '출고'}
                           </span>
                         )}
-                        {log.is_settled && (
-                          <span title="정산 완료" className="text-base leading-none">🔵</span>
-                        )}
-                        {!isProd && !log.is_settled && (
+                        {!isProd && (
                           <button
-                            onClick={() => void openSettlementModal(log)}
-                            className="rounded-full border border-neutral-300 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+                            onClick={() => !log.is_settled && void openSettlementModal(log)}
+                            disabled={!!log.is_settled}
+                            className={cn(
+                              'rounded-full border px-2.5 py-1 text-xs font-semibold',
+                              log.is_settled
+                                ? 'border-emerald-400 bg-emerald-500 text-white cursor-default'
+                                : 'border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50',
+                            )}
                           >
-                            정산
+                            정산{log.is_settled ? ' ✓' : ''}
                           </button>
                         )}
                         <button

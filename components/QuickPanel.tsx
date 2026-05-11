@@ -251,7 +251,9 @@ export default function QuickPanel({
     }
 
     const userMemo = quickPanel.memo.trim();
-    const isNewCompany = !quickPanel.companyId && quickPanel.companyName.trim() !== '';
+    const isNewCompany = !quickPanel.companyId
+      && quickPanel.companyName.trim() !== ''
+      && !companies.find((c) => c.name.toLowerCase() === quickPanel.companyName.trim().toLowerCase());
 
     // ── 생산 ──
     if (action === '생산') {

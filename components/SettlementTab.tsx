@@ -354,9 +354,20 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
 
   async function togglePaymentDone(inv: InvoiceWithItems) {
     try {
-      const { error } = await supabase.from('invoices').update({ payment_done: !inv.payment_done }).eq('id', inv.id);
+      const nextDone = !inv.payment_done;
+      const { error } = await supabase.from('invoices').update({ payment_done: nextDone }).eq('id', inv.id);
       if (error) throw error;
-      setInvoices((prev) => prev.map((i) => i.id === inv.id ? { ...i, payment_done: !inv.payment_done } : i));
+      if (nextDone) {
+        const remaining = Math.max(0, calcItemTotals(inv.items).total - calcPaid(inv.payments));
+        if (remaining > 0) {
+          await supabase.from('payments').insert({
+            invoice_id: inv.id, amount: remaining, date: todayString(), memo: '완료 처리',
+          });
+        }
+        await fetchInvoices();
+      } else {
+        setInvoices((prev) => prev.map((i) => i.id === inv.id ? { ...i, payment_done: false } : i));
+      }
     } catch (error) {
       setErrorText(getErrorMessage(error));
     }
@@ -397,10 +408,19 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
   async function openUnitPriceModal(companyName: string, companyId: number | null) {
     setUnitPriceModal({ ...EMPTY_UNIT_PRICE_MODAL, open: true, companyId, companyName, loading: true });
     try {
+      // companyId가 없으면 DB에서 직접 조회
+      let resolvedCompanyId = companyId;
+      if (!resolvedCompanyId) {
+        const { data: compRow } = await supabase.from('companies').select('id').eq('name', companyName).maybeSingle();
+        if (compRow) {
+          resolvedCompanyId = (compRow as { id: number }).id;
+          setUnitPriceModal((p) => ({ ...p, companyId: resolvedCompanyId }));
+        }
+      }
       let logRows: { item_id: number }[];
-      if (companyId) {
+      if (resolvedCompanyId) {
         const [{ data: d1 }, { data: d2 }] = await Promise.all([
-          supabase.from('inventory_logs').select('item_id').not('item_id', 'is', null).eq('company_id', companyId),
+          supabase.from('inventory_logs').select('item_id').not('item_id', 'is', null).eq('company_id', resolvedCompanyId),
           supabase.from('inventory_logs').select('item_id').not('item_id', 'is', null).is('company_id', null).eq('company_name', companyName),
         ]);
         logRows = [...(d1 ?? []), ...(d2 ?? [])] as { item_id: number }[];
@@ -417,8 +437,8 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
         itemIds.length > 0
           ? supabase.from('unit_prices').select('*').in('inventory_item_id', itemIds).then((r) => r.data)
           : Promise.resolve([]),
-        companyId
-          ? supabase.from('company_memos').select('*').eq('company_id', companyId).order('created_at', { ascending: false }).then((r) => r.data)
+        resolvedCompanyId
+          ? supabase.from('company_memos').select('*').eq('company_id', resolvedCompanyId).order('created_at', { ascending: false }).then((r) => r.data)
           : Promise.resolve([]),
       ]);
 
