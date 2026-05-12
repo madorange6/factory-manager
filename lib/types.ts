@@ -1,4 +1,4 @@
-export type TabKey = 'chat' | 'calendar' | 'stock' | 'settlement' | 'finance-calendar';
+export type TabKey = 'chat' | 'calendar' | 'stock' | 'settlement' | 'finance-calendar' | 'olbaro';
 export type MessageType = 'chat' | 'command' | 'system';
 export type InventoryCategory = '원료' | '분쇄품' | '스크랩';
 export type QuickAction = '재고' | '입고' | '출고' | '생산';
@@ -119,6 +119,26 @@ export type CashFlow = {
   recurring_day?: number | null;
   invoice_id?: number | null;
   status?: 'planned' | 'done' | null;
+  created_at: string;
+};
+
+export type OlbaroCompany = {
+  id: number;
+  factory: string;
+  company_name: string;
+  company_id: string | null;
+  representative: string | null;
+  address: string | null;
+  address_detail: string | null;
+  direction: 'in' | 'out';
+};
+
+export type OlbaroRecord = {
+  id: number;
+  factory: string;
+  transaction_date: string;
+  direction: 'in' | 'out';
+  completed_at: string | null;
   created_at: string;
 };
 
