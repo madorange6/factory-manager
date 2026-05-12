@@ -1,10 +1,13 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase/client';
 import { OlbaroCompany } from '../lib/types';
 import { getErrorMessage } from '../lib/utils';
+
+async function getXLSX() {
+  return import('xlsx');
+}
 
 type Factory = '1공장' | '2공장';
 
@@ -106,56 +109,52 @@ export default function OlbaroTab() {
     setPendingRecords((data ?? []) as PendingRecord[]);
   }
 
-  function parseFile(file: File, direction: 'in' | 'out') {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const raw = e.target?.result;
-        const wb = XLSX.read(raw, { type: 'binary' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const sheet = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
+  async function parseFile(file: File, direction: 'in' | 'out') {
+    try {
+      const XLSX = await getXLSX();
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const sheet = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
 
-        const newRows: ParsedRow[] = [];
-        // row index 4 = header (row5), row index 5+ = data (row6+)
-        for (let i = 5; i < sheet.length; i++) {
-          const row = sheet[i] as unknown[];
-          const dateRaw = row[0];
-          if (!dateRaw) continue;
+      const newRows: ParsedRow[] = [];
+      for (let i = 5; i < sheet.length; i++) {
+        const row = sheet[i] as unknown[];
+        const dateRaw = row[0];
+        if (!dateRaw) continue;
 
-          const date = parseExcelDate(dateRaw);
-          if (!date || date.length < 8) continue;
+        const date = parseExcelDate(dateRaw);
+        if (!date || date.length < 8) continue;
 
-          const companyName = direction === 'in'
-            ? String(row[6] ?? '').trim()
-            : String(row[11] ?? '').trim();
-          const itemName = String(row[26] ?? '').trim();
-          const qty = parseQty(row[28]);
+        const companyName = direction === 'in'
+          ? String(row[6] ?? '').trim()
+          : String(row[11] ?? '').trim();
+        const itemName = String(row[26] ?? '').trim();
+        const qty = parseQty(row[28]);
 
-          if (!companyName) continue;
+        if (!companyName) continue;
 
-          newRows.push({
-            uid: `${direction}-${i}-${Math.random()}`,
-            date,
-            companyName,
-            itemName,
-            qty,
-            direction,
-            checked: true,
-          });
-        }
-
-        setRows((prev) => [...prev.filter((r) => r.direction !== direction), ...newRows]);
-      } catch (err) {
-        setErrorText(getErrorMessage(err));
+        newRows.push({
+          uid: `${direction}-${i}-${Math.random()}`,
+          date,
+          companyName,
+          itemName,
+          qty,
+          direction,
+          checked: true,
+        });
       }
-    };
-    reader.readAsBinaryString(file);
+
+      setRows((prev) => [...prev.filter((r) => r.direction !== direction), ...newRows]);
+    } catch (err) {
+      setErrorText(getErrorMessage(err));
+    }
   }
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>, direction: 'in' | 'out') {
     const file = e.target.files?.[0];
     if (!file) return;
-    parseFile(file, direction);
+    void parseFile(file, direction);
     e.target.value = '';
   }
 
@@ -235,6 +234,7 @@ export default function OlbaroTab() {
       return row;
     });
 
+    const XLSX = await getXLSX();
     const ws = XLSX.utils.aoa_to_sheet([h1, h2, ...dataRows]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '재활용제품_공급_및_보관내용');
@@ -278,6 +278,7 @@ export default function OlbaroTab() {
       return row;
     });
 
+    const XLSX = await getXLSX();
     const ws = XLSX.utils.aoa_to_sheet([header, ...dataRows]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '폐기물_재활용내용');
