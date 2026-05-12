@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase/client';
-import { Company, CompanyMemo, InventoryItem, Invoice, InvoiceItem, Payment } from '../lib/types';
+import { Company, CompanyMemo, DeliveryNoteTemplate, InventoryItem, Invoice, InvoiceItem, Payment } from '../lib/types';
 import { cn, formatCurrency, getErrorMessage, todayString } from '../lib/utils';
+
+async function getXLSX() { return import('xlsx'); }
 
 type Props = {
   companies: Company[];
@@ -92,6 +94,48 @@ const EMPTY_PAYMENT_MODAL: PaymentModal = {
   error: '',
 };
 
+type DnModal = {
+  open: boolean;
+  companyId: number | null;
+  companyName: string;
+  factory: string;
+  template: DeliveryNoteTemplate | null;
+  loading: boolean;
+  generating: boolean;
+  error: string;
+  month: string;
+  showConfig: boolean;
+  cfgFile: File | null;
+  cfgDataStart: number;
+  cfgColDate: number;
+  cfgColItem: string;
+  cfgColQty: number;
+  cfgColPrice: number;
+  cfgColAmount: number;
+  cfgColNote: string;
+  cfgMonthRow: number;
+  cfgMonthCol: number;
+  cfgCatPC: string;
+  cfgCatPP: string;
+  cfgCatABS: string;
+  cfgCatAF: string;
+};
+
+const curMonthStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const EMPTY_DN_MODAL: DnModal = {
+  open: false, companyId: null, companyName: '', factory: '',
+  template: null, loading: false, generating: false, error: '', month: curMonthStr(),
+  showConfig: false, cfgFile: null,
+  cfgDataStart: 9, cfgColDate: 0, cfgColItem: '1', cfgColQty: 3,
+  cfgColPrice: 5, cfgColAmount: 7, cfgColNote: '9',
+  cfgMonthRow: 6, cfgMonthCol: 1,
+  cfgCatPC: '', cfgCatPP: '', cfgCatABS: '', cfgCatAF: '',
+};
+
 export default function SettlementTab({ companies, inventory, onCompanyAdded }: Props) {
   const [invoices, setInvoices] = useState<InvoiceWithItems[]>([]);
   const [loading, setLoading] = useState(true);
@@ -127,6 +171,8 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
   const [expandedDoneIds, setExpandedDoneIds] = useState<Set<number>>(new Set());
   const [unitPriceModal, setUnitPriceModal] = useState<UnitPriceModal>(EMPTY_UNIT_PRICE_MODAL);
   const lastStarTapRef = useRef<{ name: string; time: number } | null>(null);
+  const [showMonthlyOnly, setShowMonthlyOnly] = useState(false);
+  const [dnModal, setDnModal] = useState<DnModal>({ ...EMPTY_DN_MODAL });
 
   useEffect(() => { void fetchInvoices(); }, []);
 
@@ -187,6 +233,7 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
     if (statusFilter === 'pending' && inv.payment_done) return false;
     if (statusFilter === 'done' && !inv.payment_done) return false;
     if (directionFilter !== 'all' && inv.direction !== directionFilter) return false;
+    if (summaryFactoryFilter !== 'all' && inv.factory !== summaryFactoryFilter) return false;
     if (invoiceStatusFilter !== 'all' && inv.invoice_status !== invoiceStatusFilter) return false;
     if (companySearch.trim() && !inv.company_name.includes(companySearch.trim())) return false;
     return true;
@@ -204,7 +251,14 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
       return new Date(a.date).getTime() - new Date(b.date).getTime();
     });
   }
-  const sortedGroupKeys = Array.from(groupMap.keys()).sort((a, b) => a.localeCompare(b, 'ko'));
+  const monthlyCompanyIds = new Set(companies.filter((c) => c.is_monthly_settlement).map((c) => c.id));
+  const sortedGroupKeys = Array.from(groupMap.keys())
+    .filter((name) => {
+      if (!showMonthlyOnly) return true;
+      const inv = groupMap.get(name)?.[0];
+      return inv?.company_id != null && monthlyCompanyIds.has(inv.company_id);
+    })
+    .sort((a, b) => a.localeCompare(b, 'ko'));
 
   function toggleGroup(name: string) {
     setExpandedGroups((prev) => {
@@ -402,6 +456,178 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
       void openUnitPriceModal(companyName, resolvedId);
     } else {
       lastStarTapRef.current = { name: companyName, time: now };
+    }
+  }
+
+  async function toggleMonthlySettlement(companyId: number | null, companyName: string, current: boolean) {
+    if (!companyId) return;
+    await supabase.from('companies').update({ is_monthly_settlement: !current }).eq('id', companyId);
+  }
+
+  async function openDeliveryNoteModal(companyName: string, companyId: number | null, factory: string) {
+    setDnModal({ ...EMPTY_DN_MODAL, open: true, companyId, companyName, factory, loading: true });
+    if (!companyId) { setDnModal((p) => ({ ...p, loading: false, showConfig: true })); return; }
+    const { data } = await supabase.from('delivery_note_templates')
+      .select('*').eq('company_id', companyId).eq('factory', factory).maybeSingle();
+    const tpl = data as DeliveryNoteTemplate | null;
+    if (tpl) {
+      setDnModal((p) => ({
+        ...p, loading: false, template: tpl,
+        cfgDataStart: tpl.data_start_row, cfgColDate: tpl.col_date,
+        cfgColItem: tpl.col_item != null ? String(tpl.col_item) : '',
+        cfgColQty: tpl.col_qty, cfgColPrice: tpl.col_price, cfgColAmount: tpl.col_amount,
+        cfgColNote: tpl.col_note != null ? String(tpl.col_note) : '',
+        cfgMonthRow: tpl.month_cell_row, cfgMonthCol: tpl.month_cell_col,
+        cfgCatPC: tpl.category_cols?.PC ? String(tpl.category_cols.PC.col) : '',
+        cfgCatPP: tpl.category_cols?.PP ? String(tpl.category_cols.PP.col) : '',
+        cfgCatABS: tpl.category_cols?.ABS ? String(tpl.category_cols.ABS.col) : '',
+        cfgCatAF: tpl.category_cols?.AF ? String(tpl.category_cols.AF.col) : '',
+      }));
+    } else {
+      setDnModal((p) => ({ ...p, loading: false, showConfig: true }));
+    }
+  }
+
+  async function saveDnTemplate() {
+    const { companyId, factory, cfgFile, cfgDataStart, cfgColDate, cfgColItem, cfgColQty,
+      cfgColPrice, cfgColAmount, cfgColNote, cfgMonthRow, cfgMonthCol,
+      cfgCatPC, cfgCatPP, cfgCatABS, cfgCatAF, template } = dnModal;
+    if (!companyId) return;
+
+    let templateXlsx = template?.template_xlsx ?? '';
+    if (cfgFile) {
+      const buf = await cfgFile.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let bin = '';
+      bytes.forEach((b) => { bin += String.fromCharCode(b); });
+      templateXlsx = btoa(bin);
+    }
+    if (!templateXlsx) { setDnModal((p) => ({ ...p, error: '양식 파일을 먼저 업로드해주세요.' })); return; }
+
+    const categoryColsObj: Record<string, { col: number; prefix: string }> = {};
+    if (cfgCatPC) categoryColsObj.PC = { col: parseInt(cfgCatPC), prefix: 'PC' };
+    if (cfgCatPP) categoryColsObj.PP = { col: parseInt(cfgCatPP), prefix: 'PP' };
+    if (cfgCatABS) categoryColsObj.ABS = { col: parseInt(cfgCatABS), prefix: 'ABS' };
+    if (cfgCatAF) categoryColsObj.AF = { col: parseInt(cfgCatAF), prefix: 'AF' };
+
+    const payload = {
+      company_id: companyId, factory,
+      template_xlsx: templateXlsx,
+      data_start_row: cfgDataStart,
+      col_date: cfgColDate,
+      col_item: cfgColItem.trim() !== '' ? parseInt(cfgColItem) : null,
+      col_qty: cfgColQty, col_price: cfgColPrice, col_amount: cfgColAmount,
+      col_note: cfgColNote.trim() !== '' ? parseInt(cfgColNote) : null,
+      month_cell_row: cfgMonthRow, month_cell_col: cfgMonthCol,
+      category_cols: categoryColsObj,
+    };
+
+    if (template) {
+      await supabase.from('delivery_note_templates').update(payload).eq('id', template.id);
+    } else {
+      await supabase.from('delivery_note_templates').insert(payload);
+    }
+
+    const { data } = await supabase.from('delivery_note_templates')
+      .select('*').eq('company_id', companyId).eq('factory', factory).maybeSingle();
+    setDnModal((p) => ({ ...p, template: data as DeliveryNoteTemplate, showConfig: false }));
+  }
+
+  async function generateDeliveryNote() {
+    const { companyId, companyName, factory, template, month } = dnModal;
+    if (!template) return;
+    setDnModal((p) => ({ ...p, generating: true, error: '' }));
+
+    try {
+      const [year, mon] = month.split('-').map(Number);
+      const lastDay = new Date(year, mon, 0).getDate();
+      const dateFrom = `${month}-01`;
+      const dateTo = `${month}-${String(lastDay).padStart(2, '0')}`;
+
+      const logsQuery = supabase.from('inventory_logs')
+        .select('date, kg_weight, qty, item_id')
+        .eq('action', 'out')
+        .gte('date', dateFrom)
+        .lte('date', dateTo)
+        .order('date', { ascending: true });
+
+      if (companyId) {
+        logsQuery.or(`company_id.eq.${companyId},company_name.eq.${companyName}`);
+      } else {
+        logsQuery.eq('company_name', companyName);
+      }
+
+      const { data: logs } = await logsQuery;
+      if (!logs || logs.length === 0) {
+        setDnModal((p) => ({ ...p, generating: false, error: '해당 월 출고 내역이 없습니다.' }));
+        return;
+      }
+
+      const itemIds = [...new Set((logs as { item_id: number | null }[]).map((l) => l.item_id).filter(Boolean))] as number[];
+      const priceMap = new Map<number, number>();
+      const itemNameMap = new Map<number, string>();
+
+      if (itemIds.length > 0) {
+        const [{ data: priceData }, { data: itemData }] = await Promise.all([
+          supabase.from('unit_prices').select('inventory_item_id, unit_price').in('inventory_item_id', itemIds),
+          supabase.from('inventory_items').select('id, name').in('id', itemIds),
+        ]);
+        (priceData ?? []).forEach((p: { inventory_item_id: number; unit_price: number }) =>
+          priceMap.set(p.inventory_item_id, p.unit_price));
+        (itemData ?? []).forEach((i: { id: number; name: string }) =>
+          itemNameMap.set(i.id, i.name));
+      }
+
+      const XLSX = await getXLSX();
+      const wb = XLSX.read(template.template_xlsx, { type: 'base64' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+
+      // 월 셀 업데이트
+      const monthSerial = Math.round((new Date(year, mon - 1, 1).getTime() / 86400000) + 25569);
+      const monthAddr = XLSX.utils.encode_cell({ r: template.month_cell_row, c: template.month_cell_col });
+      if (ws[monthAddr]) ws[monthAddr].v = monthSerial;
+
+      // 기존 데이터 행 삭제
+      const ref = XLSX.utils.decode_range(ws['!ref'] ?? 'A1');
+      for (let r = template.data_start_row; r <= ref.e.r; r++) {
+        for (let c = ref.s.c; c <= ref.e.c; c++) {
+          delete ws[XLSX.utils.encode_cell({ r, c })];
+        }
+      }
+
+      // 새 데이터 행 작성
+      (logs as { date: string; kg_weight: number | null; qty: number; item_id: number | null }[]).forEach((log, idx) => {
+        const r = template.data_start_row + idx;
+        const itemName = log.item_id ? (itemNameMap.get(log.item_id) ?? '') : '';
+        const kgQty = log.kg_weight ?? log.qty ?? 0;
+        const unitPrice = log.item_id ? (priceMap.get(log.item_id) ?? 0) : 0;
+        const amount = kgQty * unitPrice;
+
+        const setCell = (c: number, v: string | number, t?: string) => {
+          ws[XLSX.utils.encode_cell({ r, c })] = { v, t: t ?? (typeof v === 'number' ? 'n' : 's') };
+        };
+
+        const dateSerial = Math.round((new Date(log.date).getTime() / 86400000) + 25569);
+        setCell(template.col_date, dateSerial, 'n');
+        if (template.col_item != null) setCell(template.col_item, itemName);
+        setCell(template.col_qty, kgQty, 'n');
+        if (unitPrice > 0) setCell(template.col_price, unitPrice, 'n');
+        if (amount > 0) setCell(template.col_amount, amount, 'n');
+
+        // 카테고리 컬럼
+        Object.entries(template.category_cols ?? {}).forEach(([, cfg]) => {
+          if (itemName.startsWith(cfg.prefix)) setCell(cfg.col, kgQty, 'n');
+        });
+      });
+
+      // ref 범위 업데이트
+      ref.e.r = Math.max(ref.e.r, template.data_start_row + logs.length - 1);
+      ws['!ref'] = XLSX.utils.encode_range(ref);
+
+      XLSX.writeFile(wb, `납품내역서_${companyName}_${month}.xlsx`);
+      setDnModal((p) => ({ ...p, generating: false }));
+    } catch (e) {
+      setDnModal((p) => ({ ...p, generating: false, error: getErrorMessage(e) }));
     }
   }
 
@@ -899,9 +1125,18 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
         />
       </div>
 
-      <button onClick={openNewForm} className="mb-4 w-full rounded-2xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white">
-        + 새 정산 추가
-      </button>
+      <div className="mb-3 flex gap-2">
+        <button
+          onClick={() => setShowMonthlyOnly((v) => !v)}
+          className={cn('flex-1 rounded-2xl border py-2 text-xs font-semibold',
+            showMonthlyOnly ? 'border-violet-600 bg-violet-600 text-white' : 'border-neutral-200 bg-white text-neutral-600')}
+        >
+          월말정산만
+        </button>
+        <button onClick={openNewForm} className="flex-[3] rounded-2xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white">
+          + 새 정산 추가
+        </button>
+      </div>
 
       {loading ? (
         <div className="py-8 text-center text-sm text-neutral-500">불러오는 중…</div>
@@ -959,6 +1194,28 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
                     {pendingCount > 0 && (
                       <span className="text-sm font-bold text-neutral-700">{formatCurrency(pendingAmount)}원</span>
                     )}
+                    {(() => {
+                      const co = companies.find((c) => c.id === groupInvoices[0]?.company_id);
+                      const isMonthly = co?.is_monthly_settlement ?? false;
+                      const coId = groupInvoices[0]?.company_id ?? null;
+                      const coFactory = groupInvoices[0]?.factory ?? '';
+                      return (
+                        <>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); void toggleMonthlySettlement(coId, companyName, isMonthly); }}
+                            title={isMonthly ? '월말정산 해제' : '월말정산 설정'}
+                            className={cn('rounded-full border w-6 h-6 flex items-center justify-center text-[10px] font-bold',
+                              isMonthly ? 'border-violet-400 bg-violet-100 text-violet-700' : 'border-neutral-200 bg-white text-neutral-400')}
+                          >月</button>
+                          {isMonthly && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); void openDeliveryNoteModal(companyName, coId, coFactory); }}
+                              className="rounded-full border border-violet-300 bg-violet-50 px-2 h-6 flex items-center justify-center text-[10px] font-semibold text-violet-700 hover:bg-violet-100"
+                            >납품내역서</button>
+                          )}
+                        </>
+                      );
+                    })()}
                     <button
                       onClick={(e) => { e.stopPropagation(); handleStarTap(companyName, groupInvoices[0]?.company_id ?? null); }}
                       className="rounded-full border border-amber-200 bg-amber-50 w-6 h-6 flex items-center justify-center text-amber-500 text-xs font-bold hover:bg-amber-100"
@@ -1443,6 +1700,139 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
               >
                 {unitPriceModal.saving ? '저장중' : '저장'}
               </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 납품내역서 모달 */}
+      {dnModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold">{dnModal.companyName} 납품내역서</h3>
+              <button onClick={() => setDnModal({ ...EMPTY_DN_MODAL })} className="text-neutral-400 text-lg">✕</button>
+            </div>
+
+            {dnModal.error && (
+              <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{dnModal.error}</div>
+            )}
+
+            {dnModal.loading ? (
+              <p className="py-4 text-center text-sm text-neutral-500">불러오는 중…</p>
+            ) : (
+              <>
+                {/* 템플릿 있을 때: 월 선택 + 생성 버튼 */}
+                {dnModal.template && !dnModal.showConfig && (
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      <p className="mb-1 text-xs font-semibold text-neutral-500">대상 월</p>
+                      <input
+                        type="month"
+                        value={dnModal.month}
+                        onChange={(e) => setDnModal((p) => ({ ...p, month: e.target.value }))}
+                        className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <button
+                      onClick={() => void generateDeliveryNote()}
+                      disabled={dnModal.generating}
+                      className="w-full rounded-xl bg-violet-600 py-3 text-sm font-semibold text-white disabled:opacity-50"
+                    >
+                      {dnModal.generating ? '생성 중…' : '납품내역서 생성 및 다운로드'}
+                    </button>
+                    <button
+                      onClick={() => setDnModal((p) => ({ ...p, showConfig: true }))}
+                      className="w-full rounded-xl border border-neutral-200 py-2 text-xs text-neutral-500"
+                    >
+                      양식/컬럼 설정 변경
+                    </button>
+                  </div>
+                )}
+
+                {/* 설정 폼 */}
+                {(!dnModal.template || dnModal.showConfig) && (
+                  <div className="flex flex-col gap-2 text-xs">
+                    <p className="font-semibold text-neutral-600">
+                      {dnModal.template ? '양식/컬럼 설정 변경' : '양식 등록 (최초 1회)'}
+                    </p>
+
+                    <div>
+                      <p className="mb-1 text-neutral-500">엑셀 양식 파일 (.xlsx)</p>
+                      <input
+                        type="file"
+                        accept=".xlsx,.xls"
+                        onChange={(e) => setDnModal((p) => ({ ...p, cfgFile: e.target.files?.[0] ?? null }))}
+                        className="w-full rounded border border-neutral-300 px-2 py-1.5"
+                      />
+                      {dnModal.template && !dnModal.cfgFile && (
+                        <p className="mt-1 text-neutral-400">파일 없이 저장하면 기존 양식 유지</p>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        ['데이터 시작 행 (0부터)', 'cfgDataStart', 'number'],
+                        ['날짜 컬럼', 'cfgColDate', 'number'],
+                        ['품목명 컬럼 (없으면 빈칸)', 'cfgColItem', 'text'],
+                        ['수량 컬럼', 'cfgColQty', 'number'],
+                        ['단가 컬럼', 'cfgColPrice', 'number'],
+                        ['금액 컬럼', 'cfgColAmount', 'number'],
+                        ['비고 컬럼 (없으면 빈칸)', 'cfgColNote', 'text'],
+                        ['월 셀 행', 'cfgMonthRow', 'number'],
+                        ['월 셀 컬럼', 'cfgMonthCol', 'number'],
+                      ] as [string, keyof DnModal, string][]).map(([label, key, type]) => (
+                        <div key={key}>
+                          <p className="mb-0.5 text-neutral-500">{label}</p>
+                          <input
+                            type={type}
+                            value={String(dnModal[key] ?? '')}
+                            onChange={(e) => setDnModal((p) => ({ ...p, [key]: type === 'number' ? Number(e.target.value) : e.target.value }))}
+                            className="w-full rounded border border-neutral-300 px-2 py-1"
+                          />
+                        </div>
+                      ))}
+                    </div>
+
+                    <p className="mt-1 font-semibold text-neutral-600">카테고리 분류 컬럼 (선택)</p>
+                    <p className="text-neutral-400">품목명 앞글자가 일치하면 해당 컬럼에 수량 기입</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(['PC', 'PP', 'ABS', 'AF'] as const).map((cat) => {
+                        const key = `cfgCat${cat}` as keyof DnModal;
+                        return (
+                          <div key={cat}>
+                            <p className="mb-0.5 text-neutral-500">{cat} 컬럼</p>
+                            <input
+                              type="text"
+                              placeholder="없으면 빈칸"
+                              value={String(dnModal[key] ?? '')}
+                              onChange={(e) => setDnModal((p) => ({ ...p, [key]: e.target.value }))}
+                              className="w-full rounded border border-neutral-300 px-2 py-1"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        onClick={() => void saveDnTemplate()}
+                        className="flex-1 rounded-xl bg-violet-600 py-2.5 font-semibold text-white"
+                      >
+                        저장
+                      </button>
+                      {dnModal.template && (
+                        <button
+                          onClick={() => setDnModal((p) => ({ ...p, showConfig: false }))}
+                          className="flex-1 rounded-xl border border-neutral-300 py-2.5 text-neutral-600"
+                        >
+                          취소
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

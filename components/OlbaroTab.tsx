@@ -29,6 +29,24 @@ type PendingRecord = {
   completed_at: string | null;
 };
 
+type QuickMapModal = {
+  open: boolean;
+  companyName: string;
+  direction: 'in' | 'out';
+  factory: Factory;
+  company_id: string;
+  representative: string;
+  address: string;
+  address_detail: string;
+  saving: boolean;
+};
+
+const EMPTY_QUICK_MAP: QuickMapModal = {
+  open: false, companyName: '', direction: 'in', factory: '1공장',
+  company_id: '', representative: '', address: '', address_detail: '',
+  saving: false,
+};
+
 function cn(...cls: Array<string | false | null | undefined>) {
   return cls.filter(Boolean).join(' ');
 }
@@ -79,6 +97,8 @@ export default function OlbaroTab() {
   const [newCo, setNewCo] = useState<Partial<OlbaroCompany & { direction: 'in' | 'out' }>>({});
   const [editId, setEditId] = useState<number | null>(null);
   const [editCo, setEditCo] = useState<Partial<OlbaroCompany>>({});
+  const [quickMap, setQuickMap] = useState<QuickMapModal>({ ...EMPTY_QUICK_MAP });
+  const [mgmtError, setMgmtError] = useState('');
 
   const inRef = useRef<HTMLInputElement>(null);
   const outRef = useRef<HTMLInputElement>(null);
@@ -302,6 +322,7 @@ export default function OlbaroTab() {
 
   async function addCompany() {
     if (!newCo.company_name?.trim() || !newCo.direction) return;
+    setMgmtError('');
     const { error } = await supabase.from('olbaro_companies').insert({
       factory,
       company_name: newCo.company_name.trim(),
@@ -311,14 +332,14 @@ export default function OlbaroTab() {
       address_detail: newCo.address_detail?.trim() || null,
       direction: newCo.direction,
     });
-    if (error) { setErrorText(getErrorMessage(error)); return; }
+    if (error) { setMgmtError(getErrorMessage(error)); return; }
     setNewCo({});
     void fetchCompanies();
   }
 
   async function deleteCompany(id: number) {
     const { error } = await supabase.from('olbaro_companies').delete().eq('id', id);
-    if (error) { setErrorText(getErrorMessage(error)); return; }
+    if (error) { setMgmtError(getErrorMessage(error)); return; }
     void fetchCompanies();
   }
 
@@ -332,9 +353,30 @@ export default function OlbaroTab() {
       address_detail: editCo.address_detail?.trim() || null,
       direction: editCo.direction,
     }).eq('id', editId);
-    if (error) { setErrorText(getErrorMessage(error)); return; }
+    if (error) { setMgmtError(getErrorMessage(error)); return; }
     setEditId(null);
     setEditCo({});
+    void fetchCompanies();
+  }
+
+  function openQuickMap(r: ParsedRow) {
+    setQuickMap({ ...EMPTY_QUICK_MAP, open: true, companyName: r.companyName, direction: r.direction, factory });
+  }
+
+  async function saveQuickMap() {
+    if (!quickMap.companyName.trim()) return;
+    setQuickMap((p) => ({ ...p, saving: true }));
+    const { error } = await supabase.from('olbaro_companies').insert({
+      factory: quickMap.factory,
+      company_name: quickMap.companyName.trim(),
+      company_id: quickMap.company_id.trim() || null,
+      representative: quickMap.representative.trim() || null,
+      address: quickMap.address.trim() || null,
+      address_detail: quickMap.address_detail.trim() || null,
+      direction: quickMap.direction,
+    });
+    if (error) { setQuickMap((p) => ({ ...p, saving: false })); setMgmtError(getErrorMessage(error)); return; }
+    setQuickMap({ ...EMPTY_QUICK_MAP });
     void fetchCompanies();
   }
 
@@ -342,6 +384,7 @@ export default function OlbaroTab() {
   const outRows = rows.filter((r) => r.direction === 'out');
 
   return (
+    <>
     <div className="flex flex-col gap-4 p-4">
       {/* 공장 선택 */}
       <div className="flex gap-2">
@@ -448,7 +491,11 @@ export default function OlbaroTab() {
                             </td>
                             <td className="py-1.5 pr-2 text-neutral-500">{r.date}</td>
                             <td className="py-1.5 pr-2">
-                              <span className={cn(!co && 'font-medium text-red-500')}>
+                              <span
+                                className={cn(!co && 'font-medium text-red-500', 'cursor-pointer select-none')}
+                                onDoubleClick={() => openQuickMap(r)}
+                                title="더블탭으로 빠른 등록"
+                              >
                                 {r.companyName}
                               </span>
                               {!co && <span className="text-red-400"> !</span>}
@@ -480,7 +527,7 @@ export default function OlbaroTab() {
 
           {rows.some((r) => !getCoInfo(r.companyName, r.direction) && r.checked) && (
             <p className="text-xs text-red-500">
-              ! 표시 거래처는 미등록 상태입니다. 하단 거래처 매핑에서 먼저 등록해주세요.
+              ! 표시 거래처는 미등록 상태입니다. 거래처명을 <strong>더블탭</strong>하거나 하단 거래처 매핑에서 등록해주세요.
             </p>
           )}
         </div>
@@ -657,6 +704,12 @@ export default function OlbaroTab() {
                 placeholder="상세주소"
                 className="rounded border border-neutral-300 px-2 py-1.5"
               />
+              {mgmtError && (
+                <div className="flex items-center justify-between rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+                  <span>{mgmtError}</span>
+                  <button onClick={() => setMgmtError('')} className="ml-2 shrink-0 underline">닫기</button>
+                </div>
+              )}
               <button
                 onClick={() => void addCompany()}
                 disabled={!newCo.company_name?.trim() || !newCo.direction}
@@ -669,5 +722,86 @@ export default function OlbaroTab() {
         )}
       </div>
     </div>
+
+    {/* 더블탭 빠른 매핑 등록 모달 */}
+    {quickMap.open && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+        <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
+          <h3 className="mb-3 text-sm font-bold text-neutral-800">거래처 매핑 등록</h3>
+          <div className="flex flex-col gap-2 text-xs">
+            <div className="flex gap-2">
+              <input
+                value={quickMap.companyName}
+                onChange={(e) => setQuickMap((p) => ({ ...p, companyName: e.target.value }))}
+                placeholder="거래처명"
+                className="flex-1 rounded border border-neutral-300 px-2 py-1.5"
+              />
+              <select
+                value={quickMap.direction}
+                onChange={(e) => setQuickMap((p) => ({ ...p, direction: e.target.value as 'in' | 'out' }))}
+                className="rounded border border-neutral-300 px-2 py-1.5"
+              >
+                <option value="in">매입</option>
+                <option value="out">매출</option>
+              </select>
+            </div>
+            <div className="flex gap-2">
+              {(['1공장', '2공장'] as Factory[]).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setQuickMap((p) => ({ ...p, factory: f }))}
+                  className={cn(
+                    'flex-1 rounded border py-1.5 font-semibold',
+                    quickMap.factory === f ? 'border-blue-500 bg-blue-500 text-white' : 'border-neutral-300 text-neutral-600',
+                  )}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+            <input
+              value={quickMap.company_id}
+              onChange={(e) => setQuickMap((p) => ({ ...p, company_id: e.target.value }))}
+              placeholder="업체식별번호"
+              className="rounded border border-neutral-300 px-2 py-1.5"
+            />
+            <input
+              value={quickMap.representative}
+              onChange={(e) => setQuickMap((p) => ({ ...p, representative: e.target.value }))}
+              placeholder="대표자명"
+              className="rounded border border-neutral-300 px-2 py-1.5"
+            />
+            <input
+              value={quickMap.address}
+              onChange={(e) => setQuickMap((p) => ({ ...p, address: e.target.value }))}
+              placeholder="주소"
+              className="rounded border border-neutral-300 px-2 py-1.5"
+            />
+            <input
+              value={quickMap.address_detail}
+              onChange={(e) => setQuickMap((p) => ({ ...p, address_detail: e.target.value }))}
+              placeholder="상세주소"
+              className="rounded border border-neutral-300 px-2 py-1.5"
+            />
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={() => void saveQuickMap()}
+              disabled={!quickMap.companyName.trim() || quickMap.saving}
+              className="flex-1 rounded-xl bg-blue-500 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {quickMap.saving ? '저장 중…' : '등록'}
+            </button>
+            <button
+              onClick={() => setQuickMap({ ...EMPTY_QUICK_MAP })}
+              className="flex-1 rounded-xl border border-neutral-300 py-2.5 text-sm font-semibold text-neutral-600"
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

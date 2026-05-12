@@ -63,6 +63,7 @@ export type Company = {
   name: string;
   memo?: string | null;
   is_favorite: boolean;
+  is_monthly_settlement?: boolean | null;
   created_at: string;
 };
 
@@ -119,6 +120,24 @@ export type CashFlow = {
   recurring_day?: number | null;
   invoice_id?: number | null;
   status?: 'planned' | 'done' | null;
+  created_at: string;
+};
+
+export type DeliveryNoteTemplate = {
+  id: number;
+  company_id: number;
+  factory: string;
+  template_xlsx: string; // base64
+  data_start_row: number;
+  col_date: number;
+  col_item: number | null;
+  col_qty: number;
+  col_price: number;
+  col_amount: number;
+  col_note: number | null;
+  month_cell_row: number;
+  month_cell_col: number;
+  category_cols: Record<string, { col: number; prefix: string }>;
   created_at: string;
 };
 

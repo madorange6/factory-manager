@@ -100,7 +100,7 @@ export default function Page() {
   }
 
   async function fetchCompanies() {
-    const { data, error } = await supabase.from('companies').select('id, name, memo, is_favorite, created_at').order('name');
+    const { data, error } = await supabase.from('companies').select('id, name, memo, is_favorite, is_monthly_settlement, created_at').order('name');
     if (error) throw error;
     setCompanies((data ?? []) as Company[]);
   }
