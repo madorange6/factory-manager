@@ -1,11 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
-
 function dateStr(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -58,6 +53,10 @@ async function makeSignature(secret: string, date: string, salt: string): Promis
 
 export async function GET() {
   try {
+    const supabaseAdmin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    );
     const { data: vehicles, error } = await supabaseAdmin.from('vehicles').select('*');
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
