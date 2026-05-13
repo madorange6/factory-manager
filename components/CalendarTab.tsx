@@ -98,16 +98,21 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
   async function handleVehicleCheck(vehicle: Vehicle) {
     setCheckingVehicleId(vehicle.id);
     const now = new Date().toISOString();
-    // 검사 완료 후 다음 검사일 자동 갱신
-    const nextDate = new Date(vehicle.inspection_date);
-    nextDate.setMonth(nextDate.getMonth() + vehicle.inspection_cycle);
-    const nextDateStr = nextDate.toISOString().slice(0, 10);
-
     await supabase.from('vehicles').update({
       is_inspected: true,
       inspected_at: now,
-      inspection_date: nextDateStr,
       updated_at: now,
+    }).eq('id', vehicle.id);
+    setCheckingVehicleId(null);
+    await fetchVehicles();
+  }
+
+  async function handleVehicleUncheck(vehicle: Vehicle) {
+    setCheckingVehicleId(vehicle.id);
+    await supabase.from('vehicles').update({
+      is_inspected: false,
+      inspected_at: null,
+      updated_at: new Date().toISOString(),
     }).eq('id', vehicle.id);
     setCheckingVehicleId(null);
     await fetchVehicles();
@@ -130,14 +135,25 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
     }
   });
 
-  // 이 달 차량 검사일 Map (날짜 → 차량 배열)
+  // 이 달 차량 검사일 Map (날짜 → 차량 배열) — 검사주기 기준 반복 계산
   const vehicleInspectionMap = new Map<string, Vehicle[]>();
   vehicles.forEach((v) => {
-    const [vy, vm] = v.inspection_date.split('-').map(Number);
-    if (vy === year && vm === month + 1) {
-      const key = v.inspection_date;
-      if (!vehicleInspectionMap.has(key)) vehicleInspectionMap.set(key, []);
-      vehicleInspectionMap.get(key)!.push(v);
+    const base = new Date(v.inspection_date + 'T00:00:00');
+    // inspection_date부터 inspection_cycle 개월씩 앞으로 이동하며 현재 보는 달 찾기
+    let cycleOffset = 0;
+    while (true) {
+      const check = new Date(base);
+      check.setMonth(check.getMonth() + cycleOffset * v.inspection_cycle);
+      const cy = check.getFullYear();
+      const cm = check.getMonth(); // 0-indexed
+      if (cy > year || (cy === year && cm > month)) break; // 현재 보는 달 초과
+      if (cy === year && cm === month) {
+        const key = `${cy}-${String(cm + 1).padStart(2, '0')}-${String(check.getDate()).padStart(2, '0')}`;
+        if (!vehicleInspectionMap.has(key)) vehicleInspectionMap.set(key, []);
+        vehicleInspectionMap.get(key)!.push(v);
+        break;
+      }
+      cycleOffset++;
     }
   });
 
@@ -408,7 +424,8 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
             const dow = (startDow + day - 1) % 7;
             const dayVehicles = vehicleInspectionMap.get(key) ?? [];
             const hasInspection = dayVehicles.length > 0;
-            const allInspected = hasInspection && dayVehicles.every((v) => v.is_inspected);
+            // inspection_date가 정확히 이 날인 차량만 is_inspected 반영, 반복 주기 날짜는 항상 빨간색
+            const allInspected = hasInspection && dayVehicles.every((v) => v.is_inspected && v.inspection_date === key);
             return (
               <button
                 key={key}
@@ -447,30 +464,44 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
           {/* 차량 검사일 정보 */}
           {selectedVehicles.length > 0 && (
             <div className="mb-3 flex flex-col gap-2">
-              {selectedVehicles.map((v) => (
-                <div key={v.id} className={cn(
-                  'flex items-center justify-between rounded-2xl border px-4 py-3',
-                  v.is_inspected ? 'border-neutral-200 bg-neutral-50' : 'border-red-200 bg-red-50',
-                )}>
-                  <div>
-                    <p className={cn('text-sm font-semibold', v.is_inspected ? 'text-neutral-600' : 'text-red-700')}>
-                      🚗 {v.name} ({v.plate_number})
-                    </p>
-                    <p className={cn('text-xs mt-0.5', v.is_inspected ? 'text-neutral-400' : 'text-red-500')}>
-                      {v.is_inspected ? `✓ 검사 완료 — 다음 검사일: ${v.inspection_date}` : '정기검사일입니다'}
-                    </p>
+              {selectedVehicles.map((v) => {
+                const isCurrentDate = v.inspection_date === selectedDate;
+                const isDone = v.is_inspected && isCurrentDate;
+                return (
+                  <div key={v.id} className={cn(
+                    'flex items-center justify-between rounded-2xl border px-4 py-3',
+                    isDone ? 'border-neutral-200 bg-neutral-50' : 'border-red-200 bg-red-50',
+                  )}>
+                    <div>
+                      <p className={cn('text-sm font-semibold', isDone ? 'text-neutral-400' : 'text-red-700')}>
+                        🚗 {v.name} ({v.plate_number})
+                      </p>
+                      <p className={cn('text-xs mt-0.5', isDone ? 'text-neutral-400' : 'text-red-500')}>
+                        {isDone ? '✓ 검사 완료' : '정기검사일입니다'}
+                      </p>
+                    </div>
+                    <div className="ml-3 flex shrink-0 gap-1.5">
+                      {isDone ? (
+                        <button
+                          onClick={() => void handleVehicleUncheck(v)}
+                          disabled={checkingVehicleId === v.id}
+                          className="rounded-xl border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-500 disabled:opacity-50 hover:bg-neutral-50"
+                        >
+                          {checkingVehicleId === v.id ? '처리중' : '완료 취소'}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => void handleVehicleCheck(v)}
+                          disabled={checkingVehicleId === v.id}
+                          className="rounded-xl bg-red-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 hover:bg-red-600"
+                        >
+                          {checkingVehicleId === v.id ? '처리중' : '검사 완료'}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  {!v.is_inspected && (
-                    <button
-                      onClick={() => void handleVehicleCheck(v)}
-                      disabled={checkingVehicleId === v.id}
-                      className="ml-3 shrink-0 rounded-xl bg-red-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 hover:bg-red-600"
-                    >
-                      {checkingVehicleId === v.id ? '처리중' : '검사 완료'}
-                    </button>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
