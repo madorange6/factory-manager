@@ -114,6 +114,7 @@ export default function StockTab({
   const [savingProfileId, setSavingProfileId] = useState<string | null>(null);
 
   // 거래처 관리
+  const [showCompanyMgmt, setShowCompanyMgmt] = useState(false);
   const [editingCompanyId, setEditingCompanyId] = useState<number | null>(null);
   const [editingCompanyName, setEditingCompanyName] = useState('');
   const [companyMgmtError, setCompanyMgmtError] = useState('');
@@ -473,57 +474,67 @@ export default function StockTab({
           </div>
 
           {/* 거래처 관리 */}
-          <div className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm">
-            <p className="mb-3 text-sm font-semibold">거래처 관리</p>
-            {companyMgmtError && (
-              <p className="mb-2 text-xs text-red-600">{companyMgmtError}</p>
+          <div className="rounded-3xl border border-neutral-200 bg-white shadow-sm">
+            <button
+              onClick={() => setShowCompanyMgmt((v) => !v)}
+              className="flex w-full items-center justify-between px-4 py-3.5 text-sm font-semibold text-neutral-700"
+            >
+              <span>거래처 관리 <span className="font-normal text-neutral-400">({companies.length}개)</span></span>
+              <span className="text-neutral-400">{showCompanyMgmt ? '▲' : '▼'}</span>
+            </button>
+            {showCompanyMgmt && (
+              <div className="border-t border-neutral-100 p-4">
+                {companyMgmtError && (
+                  <p className="mb-2 text-xs text-red-600">{companyMgmtError}</p>
+                )}
+                <div className="space-y-2">
+                  {sortedCompanies.map((co) =>
+                    editingCompanyId === co.id ? (
+                      <div key={co.id} className="flex gap-2">
+                        <input
+                          value={editingCompanyName}
+                          onChange={(e) => setEditingCompanyName(e.target.value)}
+                          className="flex-1 rounded-2xl border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                        />
+                        <button
+                          onClick={() => void handleUpdateCompanyName(co.id, editingCompanyName)}
+                          className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold text-neutral-700"
+                        >
+                          저장
+                        </button>
+                        <button
+                          onClick={() => { setEditingCompanyId(null); setEditingCompanyName(''); }}
+                          className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-500"
+                        >
+                          취소
+                        </button>
+                      </div>
+                    ) : (
+                      <div key={co.id} className="flex items-center justify-between rounded-2xl border border-neutral-100 bg-neutral-50 px-3 py-2.5">
+                        <span className="text-sm">{co.name}</span>
+                        <div className="flex gap-1.5">
+                          <button
+                            onClick={() => { setEditingCompanyId(co.id); setEditingCompanyName(co.name); setCompanyMgmtError(''); }}
+                            className="rounded-xl border border-neutral-200 bg-white px-2.5 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100"
+                          >
+                            수정
+                          </button>
+                          <button
+                            onClick={() => void handleDeleteCompany(co.id, co.name)}
+                            className="rounded-xl border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-500 hover:bg-red-50"
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      </div>
+                    ),
+                  )}
+                  {companies.length === 0 && (
+                    <p className="text-sm text-neutral-400">등록된 거래처가 없습니다.</p>
+                  )}
+                </div>
+              </div>
             )}
-            <div className="space-y-2">
-              {sortedCompanies.map((co) =>
-                editingCompanyId === co.id ? (
-                  <div key={co.id} className="flex gap-2">
-                    <input
-                      value={editingCompanyName}
-                      onChange={(e) => setEditingCompanyName(e.target.value)}
-                      className="flex-1 rounded-2xl border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400"
-                    />
-                    <button
-                      onClick={() => void handleUpdateCompanyName(co.id, editingCompanyName)}
-                      className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold text-neutral-700"
-                    >
-                      저장
-                    </button>
-                    <button
-                      onClick={() => { setEditingCompanyId(null); setEditingCompanyName(''); }}
-                      className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-500"
-                    >
-                      취소
-                    </button>
-                  </div>
-                ) : (
-                  <div key={co.id} className="flex items-center justify-between rounded-2xl border border-neutral-100 bg-neutral-50 px-3 py-2.5">
-                    <span className="text-sm">{co.name}</span>
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={() => { setEditingCompanyId(co.id); setEditingCompanyName(co.name); setCompanyMgmtError(''); }}
-                        className="rounded-xl border border-neutral-200 bg-white px-2.5 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100"
-                      >
-                        수정
-                      </button>
-                      <button
-                        onClick={() => void handleDeleteCompany(co.id, co.name)}
-                        className="rounded-xl border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-500 hover:bg-red-50"
-                      >
-                        삭제
-                      </button>
-                    </div>
-                  </div>
-                ),
-              )}
-              {companies.length === 0 && (
-                <p className="text-sm text-neutral-400">등록된 거래처가 없습니다.</p>
-              )}
-            </div>
           </div>
 
           {/* 새 품목 추가 */}

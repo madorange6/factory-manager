@@ -540,7 +540,7 @@ export default function OlbaroTab() {
             list.length > 0 ? (
               <div key={direction}>
                 <p className="mb-1.5 text-xs font-medium text-neutral-400">{label} ({list.length}건)</p>
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto overflow-y-visible">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b border-neutral-100 text-neutral-400">
@@ -608,14 +608,20 @@ export default function OlbaroTab() {
                                       ))}
                                       <div className="border-t border-neutral-100">
                                         <input
-                                          autoFocus
-                                          placeholder="직접 입력"
+                                          placeholder="직접 입력 후 Enter"
                                           defaultValue={r.itemName}
                                           onKeyDown={(e) => {
                                             if (e.key === 'Enter') {
                                               updateRow(r.uid, 'itemName', e.currentTarget.value);
                                               setActiveItemDropdown(null);
                                             }
+                                            if (e.key === 'Escape') setActiveItemDropdown(null);
+                                          }}
+                                          onBlur={(e) => {
+                                            if (e.currentTarget.value.trim()) {
+                                              updateRow(r.uid, 'itemName', e.currentTarget.value);
+                                            }
+                                            setActiveItemDropdown(null);
                                           }}
                                           className="w-full px-3 py-1.5 text-xs outline-none placeholder:text-neutral-300"
                                         />

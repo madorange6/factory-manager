@@ -523,11 +523,15 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
       category_cols: categoryColsObj,
     };
 
+    let saveError: string | null = null;
     if (template) {
-      await supabase.from('delivery_note_templates').update(payload).eq('id', template.id);
+      const { error } = await supabase.from('delivery_note_templates').update(payload).eq('id', template.id);
+      if (error) saveError = error.message;
     } else {
-      await supabase.from('delivery_note_templates').insert(payload);
+      const { error } = await supabase.from('delivery_note_templates').insert(payload);
+      if (error) saveError = error.message;
     }
+    if (saveError) { setDnModal((p) => ({ ...p, error: `저장 실패: ${saveError}` })); return; }
 
     const { data } = await supabase.from('delivery_note_templates')
       .select('*').eq('company_id', companyId).eq('factory', factory).maybeSingle();
