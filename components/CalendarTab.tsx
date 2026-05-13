@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase/client';
-import { Company, InventoryItem, InventoryLogRow } from '../lib/types';
+import { Company, InventoryItem, InventoryLogRow, Vehicle } from '../lib/types';
 import { cn, formatDateTime, getErrorMessage, todayString } from '../lib/utils';
 
 type Props = {
@@ -84,6 +84,35 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
   const [editingNoteValue, setEditingNoteValue] = useState('');
   const [savingNoteId, setSavingNoteId] = useState<number | null>(null);
 
+  // 차량 검사일
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [checkingVehicleId, setCheckingVehicleId] = useState<string | null>(null);
+
+  useEffect(() => { void fetchVehicles(); }, []);
+
+  async function fetchVehicles() {
+    const { data } = await supabase.from('vehicles').select('*');
+    setVehicles((data ?? []) as Vehicle[]);
+  }
+
+  async function handleVehicleCheck(vehicle: Vehicle) {
+    setCheckingVehicleId(vehicle.id);
+    const now = new Date().toISOString();
+    // 검사 완료 후 다음 검사일 자동 갱신
+    const nextDate = new Date(vehicle.inspection_date);
+    nextDate.setMonth(nextDate.getMonth() + vehicle.inspection_cycle);
+    const nextDateStr = nextDate.toISOString().slice(0, 10);
+
+    await supabase.from('vehicles').update({
+      is_inspected: true,
+      inspected_at: now,
+      inspection_date: nextDateStr,
+      updated_at: now,
+    }).eq('id', vehicle.id);
+    setCheckingVehicleId(null);
+    await fetchVehicles();
+  }
+
   const inventoryMap = new Map(inventory.map((item) => [item.id, item]));
 
   const firstDay = new Date(year, month, 1);
@@ -100,6 +129,20 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
       activeDates.add(key);
     }
   });
+
+  // 이 달 차량 검사일 Map (날짜 → 차량 배열)
+  const vehicleInspectionMap = new Map<string, Vehicle[]>();
+  vehicles.forEach((v) => {
+    const [vy, vm] = v.inspection_date.split('-').map(Number);
+    if (vy === year && vm === month + 1) {
+      const key = v.inspection_date;
+      if (!vehicleInspectionMap.has(key)) vehicleInspectionMap.set(key, []);
+      vehicleInspectionMap.get(key)!.push(v);
+    }
+  });
+
+  // 선택된 날짜의 차량 검사 목록
+  const selectedVehicles = selectedDate ? (vehicleInspectionMap.get(selectedDate) ?? []) : [];
 
   function toDateKey(day: number) {
     return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -363,6 +406,9 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
             const isToday = key === todayKey;
             const isSelected = key === selectedDate;
             const dow = (startDow + day - 1) % 7;
+            const dayVehicles = vehicleInspectionMap.get(key) ?? [];
+            const hasInspection = dayVehicles.length > 0;
+            const allInspected = hasInspection && dayVehicles.every((v) => v.is_inspected);
             return (
               <button
                 key={key}
@@ -377,9 +423,14 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
                 <span className={cn('text-sm font-medium', isSelected ? 'text-white' : dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-neutral-800')}>
                   {day}
                 </span>
-                {hasLogs && (
-                  <span className={cn('mt-0.5 h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-emerald-500')} />
-                )}
+                <div className="flex gap-0.5 mt-0.5">
+                  {hasLogs && (
+                    <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-emerald-500')} />
+                  )}
+                  {hasInspection && (
+                    <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : allInspected ? 'bg-neutral-400' : 'bg-red-500')} />
+                  )}
+                </div>
               </button>
             );
           })}
@@ -392,6 +443,36 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
           <p className="mb-3 text-sm font-semibold text-neutral-700">
             {selectedDate.replace(/-/g, '/')} 입출고 내역
           </p>
+
+          {/* 차량 검사일 정보 */}
+          {selectedVehicles.length > 0 && (
+            <div className="mb-3 flex flex-col gap-2">
+              {selectedVehicles.map((v) => (
+                <div key={v.id} className={cn(
+                  'flex items-center justify-between rounded-2xl border px-4 py-3',
+                  v.is_inspected ? 'border-neutral-200 bg-neutral-50' : 'border-red-200 bg-red-50',
+                )}>
+                  <div>
+                    <p className={cn('text-sm font-semibold', v.is_inspected ? 'text-neutral-600' : 'text-red-700')}>
+                      🚗 {v.name} ({v.plate_number})
+                    </p>
+                    <p className={cn('text-xs mt-0.5', v.is_inspected ? 'text-neutral-400' : 'text-red-500')}>
+                      {v.is_inspected ? `✓ 검사 완료 — 다음 검사일: ${v.inspection_date}` : '정기검사일입니다'}
+                    </p>
+                  </div>
+                  {!v.is_inspected && (
+                    <button
+                      onClick={() => void handleVehicleCheck(v)}
+                      disabled={checkingVehicleId === v.id}
+                      className="ml-3 shrink-0 rounded-xl bg-red-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 hover:bg-red-600"
+                    >
+                      {checkingVehicleId === v.id ? '처리중' : '검사 완료'}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {selectedLogs.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-neutral-300 bg-white px-4 py-6 text-center text-sm text-neutral-500">

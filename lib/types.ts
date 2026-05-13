@@ -161,6 +161,19 @@ export type OlbaroRecord = {
   created_at: string;
 };
 
+export type Vehicle = {
+  id: string;
+  name: string;
+  plate_number: string;
+  inspection_date: string;
+  recipient_phone: string;
+  inspection_cycle: number;
+  is_inspected: boolean;
+  inspected_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ProductionSource = {
   itemId: number | null;
   customName: string;
