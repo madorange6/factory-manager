@@ -113,6 +113,11 @@ export default function StockTab({
   const [userNameDrafts, setUserNameDrafts] = useState<Record<string, string>>({});
   const [savingProfileId, setSavingProfileId] = useState<string | null>(null);
 
+  // 거래처 관리
+  const [editingCompanyId, setEditingCompanyId] = useState<number | null>(null);
+  const [editingCompanyName, setEditingCompanyName] = useState('');
+  const [companyMgmtError, setCompanyMgmtError] = useState('');
+
   const isAdmin = currentUserEmail === ADMIN_EMAIL;
   const stockTabs = ['원료', '분쇄품', '스크랩'];
 
@@ -275,6 +280,25 @@ export default function StockTab({
     } catch (error) {
       setErrorText(getErrorMessage(error));
     }
+  }
+
+  async function handleUpdateCompanyName(id: number, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setCompanyMgmtError('');
+    const { error } = await supabase.from('companies').update({ name: trimmed }).eq('id', id);
+    if (error) { setCompanyMgmtError(getErrorMessage(error)); return; }
+    setEditingCompanyId(null);
+    setEditingCompanyName('');
+    await onCompanyAdded();
+  }
+
+  async function handleDeleteCompany(id: number, name: string) {
+    if (!window.confirm(`"${name}" 거래처를 삭제할까요?\n관련 입출고 기록은 유지됩니다.`)) return;
+    setCompanyMgmtError('');
+    const { error } = await supabase.from('companies').delete().eq('id', id);
+    if (error) { setCompanyMgmtError(getErrorMessage(error)); return; }
+    await onCompanyAdded();
   }
 
   return (
@@ -444,6 +468,60 @@ export default function StockTab({
                     </div>
                   </div>
                 ))
+              )}
+            </div>
+          </div>
+
+          {/* 거래처 관리 */}
+          <div className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm">
+            <p className="mb-3 text-sm font-semibold">거래처 관리</p>
+            {companyMgmtError && (
+              <p className="mb-2 text-xs text-red-600">{companyMgmtError}</p>
+            )}
+            <div className="space-y-2">
+              {sortedCompanies.map((co) =>
+                editingCompanyId === co.id ? (
+                  <div key={co.id} className="flex gap-2">
+                    <input
+                      value={editingCompanyName}
+                      onChange={(e) => setEditingCompanyName(e.target.value)}
+                      className="flex-1 rounded-2xl border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                    />
+                    <button
+                      onClick={() => void handleUpdateCompanyName(co.id, editingCompanyName)}
+                      className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold text-neutral-700"
+                    >
+                      저장
+                    </button>
+                    <button
+                      onClick={() => { setEditingCompanyId(null); setEditingCompanyName(''); }}
+                      className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-500"
+                    >
+                      취소
+                    </button>
+                  </div>
+                ) : (
+                  <div key={co.id} className="flex items-center justify-between rounded-2xl border border-neutral-100 bg-neutral-50 px-3 py-2.5">
+                    <span className="text-sm">{co.name}</span>
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => { setEditingCompanyId(co.id); setEditingCompanyName(co.name); setCompanyMgmtError(''); }}
+                        className="rounded-xl border border-neutral-200 bg-white px-2.5 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100"
+                      >
+                        수정
+                      </button>
+                      <button
+                        onClick={() => void handleDeleteCompany(co.id, co.name)}
+                        className="rounded-xl border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-500 hover:bg-red-50"
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  </div>
+                ),
+              )}
+              {companies.length === 0 && (
+                <p className="text-sm text-neutral-400">등록된 거래처가 없습니다.</p>
               )}
             </div>
           </div>

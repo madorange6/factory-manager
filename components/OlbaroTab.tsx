@@ -39,12 +39,13 @@ type QuickMapModal = {
   address: string;
   address_detail: string;
   saving: boolean;
+  error: string;
 };
 
 const EMPTY_QUICK_MAP: QuickMapModal = {
   open: false, companyName: '', direction: 'in', factory: '1공장',
   company_id: '', representative: '', address: '', address_detail: '',
-  saving: false,
+  saving: false, error: '',
 };
 
 function cn(...cls: Array<string | false | null | undefined>) {
@@ -53,7 +54,6 @@ function cn(...cls: Array<string | false | null | undefined>) {
 
 function parseExcelDate(raw: unknown): string {
   if (typeof raw === 'number') {
-    // Excel serial date (days since 1900-01-00)
     const ms = Math.round((raw - 25569) * 86400 * 1000);
     return new Date(ms).toISOString().slice(0, 10);
   }
@@ -69,7 +69,6 @@ function parseQty(raw: unknown): number {
 }
 
 function formatDateForOlbaro(dateStr: string): string {
-  // "2026-05-11" → "5/11/26"
   const [y, m, d] = dateStr.split('-');
   return `${parseInt(m)}/${parseInt(d)}/${y.slice(2)}`;
 }
@@ -93,21 +92,65 @@ export default function OlbaroTab() {
   const [companies, setCompanies] = useState<OlbaroCompany[]>([]);
   const [pendingRecords, setPendingRecords] = useState<PendingRecord[]>([]);
   const [errorText, setErrorText] = useState('');
+  const [toast, setToast] = useState('');
+
+  // 거래처 매핑 관리
   const [showMgmt, setShowMgmt] = useState(false);
   const [newCo, setNewCo] = useState<Partial<OlbaroCompany & { direction: 'in' | 'out' }>>({});
   const [editId, setEditId] = useState<number | null>(null);
   const [editCo, setEditCo] = useState<Partial<OlbaroCompany>>({});
-  const [quickMap, setQuickMap] = useState<QuickMapModal>({ ...EMPTY_QUICK_MAP });
   const [mgmtError, setMgmtError] = useState('');
+
+  // 품목명 관리
+  const [showItemMgmt, setShowItemMgmt] = useState(false);
+  const [itemNames, setItemNames] = useState<{ id: number; name: string }[]>([]);
+  const [newItemName, setNewItemName] = useState('');
+  const [itemMgmtError, setItemMgmtError] = useState('');
+
+  // 빠른 매핑 모달
+  const [quickMap, setQuickMap] = useState<QuickMapModal>({ ...EMPTY_QUICK_MAP });
+
+  // 인라인 품목명 드롭다운
+  const [activeItemDropdown, setActiveItemDropdown] = useState<string | null>(null);
 
   const inRef = useRef<HTMLInputElement>(null);
   const outRef = useRef<HTMLInputElement>(null);
 
+  // 전체선택 체크박스 ref (indeterminate)
+  const inAllRef = useRef<HTMLInputElement>(null);
+  const outAllRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     void fetchCompanies();
     void fetchPending();
+    void fetchItemNames();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [factory]);
+
+  // indeterminate 상태 동기화
+  const inRows = rows.filter((r) => r.direction === 'in');
+  const outRows = rows.filter((r) => r.direction === 'out');
+  const inCheckedCount = inRows.filter((r) => r.checked).length;
+  const outCheckedCount = outRows.filter((r) => r.checked).length;
+
+  useEffect(() => {
+    if (inAllRef.current) {
+      inAllRef.current.indeterminate = inCheckedCount > 0 && inCheckedCount < inRows.length;
+      inAllRef.current.checked = inRows.length > 0 && inCheckedCount === inRows.length;
+    }
+  }, [inCheckedCount, inRows.length]);
+
+  useEffect(() => {
+    if (outAllRef.current) {
+      outAllRef.current.indeterminate = outCheckedCount > 0 && outCheckedCount < outRows.length;
+      outAllRef.current.checked = outRows.length > 0 && outCheckedCount === outRows.length;
+    }
+  }, [outCheckedCount, outRows.length]);
+
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(''), 2500);
+  }
 
   async function fetchCompanies() {
     const { data, error } = await supabase
@@ -127,6 +170,34 @@ export default function OlbaroTab() {
       .is('completed_at', null);
     if (error) { setErrorText(getErrorMessage(error)); return; }
     setPendingRecords((data ?? []) as PendingRecord[]);
+  }
+
+  async function fetchItemNames() {
+    const { data, error } = await supabase
+      .from('olbaro_item_names')
+      .select('id, name')
+      .order('name');
+    if (error) return;
+    setItemNames((data ?? []) as { id: number; name: string }[]);
+  }
+
+  async function addItemName() {
+    const name = newItemName.trim();
+    if (!name) return;
+    setItemMgmtError('');
+    const { error } = await supabase.from('olbaro_item_names').insert({ name });
+    if (error) {
+      setItemMgmtError(error.code === '23505' ? '이미 등록된 품목명입니다.' : getErrorMessage(error));
+      return;
+    }
+    setNewItemName('');
+    void fetchItemNames();
+  }
+
+  async function deleteItemName(id: number) {
+    const { error } = await supabase.from('olbaro_item_names').delete().eq('id', id);
+    if (error) { setItemMgmtError(getErrorMessage(error)); return; }
+    void fetchItemNames();
   }
 
   async function parseFile(file: File, direction: 'in' | 'out') {
@@ -182,6 +253,10 @@ export default function OlbaroTab() {
     setRows((prev) => prev.map((r) => r.uid === uid ? { ...r, checked: !r.checked } : r));
   }
 
+  function toggleAll(direction: 'in' | 'out', toChecked: boolean) {
+    setRows((prev) => prev.map((r) => r.direction === direction ? { ...r, checked: toChecked } : r));
+  }
+
   function updateRow(uid: string, field: 'itemName' | 'qty', value: string) {
     setRows((prev) => prev.map((r) => {
       if (r.uid !== uid) return r;
@@ -194,7 +269,6 @@ export default function OlbaroTab() {
     return companies.find((c) => c.company_name === companyName && c.direction === direction);
   }
 
-  // D-day 배너: DB에 pending 기록된 항목 기준
   const banners = pendingRecords
     .map((rec) => {
       const diff = daysDiff(rec.transaction_date);
@@ -220,7 +294,6 @@ export default function OlbaroTab() {
 
     const sorted = [...checked].sort((a, b) => a.date.localeCompare(b.date));
 
-    // 2행 헤더
     const h1 = Array<string | number>(35).fill('');
     const h2 = Array<string | number>(35).fill('');
     h2[3] = '생산/공급일자'; h2[4] = '작성일자'; h2[5] = '폐기물종류'; h2[6] = '폐기물코드';
@@ -334,6 +407,7 @@ export default function OlbaroTab() {
     });
     if (error) { setMgmtError(getErrorMessage(error)); return; }
     setNewCo({});
+    showToast('등록되었습니다');
     void fetchCompanies();
   }
 
@@ -365,7 +439,7 @@ export default function OlbaroTab() {
 
   async function saveQuickMap() {
     if (!quickMap.companyName.trim()) return;
-    setQuickMap((p) => ({ ...p, saving: true }));
+    setQuickMap((p) => ({ ...p, saving: true, error: '' }));
     const { error } = await supabase.from('olbaro_companies').insert({
       factory: quickMap.factory,
       company_name: quickMap.companyName.trim(),
@@ -375,13 +449,14 @@ export default function OlbaroTab() {
       address_detail: quickMap.address_detail.trim() || null,
       direction: quickMap.direction,
     });
-    if (error) { setQuickMap((p) => ({ ...p, saving: false })); setMgmtError(getErrorMessage(error)); return; }
+    if (error) {
+      setQuickMap((p) => ({ ...p, saving: false, error: '등록 실패 - 다시 시도해주세요' }));
+      return;
+    }
     setQuickMap({ ...EMPTY_QUICK_MAP });
+    showToast('등록되었습니다');
     void fetchCompanies();
   }
-
-  const inRows = rows.filter((r) => r.direction === 'in');
-  const outRows = rows.filter((r) => r.direction === 'out');
 
   return (
     <>
@@ -459,9 +534,9 @@ export default function OlbaroTab() {
           </div>
 
           {[
-            { label: '매입', list: inRows, direction: 'in' as const },
-            { label: '매출', list: outRows, direction: 'out' as const },
-          ].map(({ label, list, direction }) =>
+            { label: '매입', list: inRows, direction: 'in' as const, allRef: inAllRef, checkedCount: inCheckedCount },
+            { label: '매출', list: outRows, direction: 'out' as const, allRef: outAllRef, checkedCount: outCheckedCount },
+          ].map(({ label, list, direction, allRef, checkedCount }) =>
             list.length > 0 ? (
               <div key={direction}>
                 <p className="mb-1.5 text-xs font-medium text-neutral-400">{label} ({list.length}건)</p>
@@ -469,7 +544,14 @@ export default function OlbaroTab() {
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b border-neutral-100 text-neutral-400">
-                        <th className="w-5 py-1 pr-2 text-left" />
+                        <th className="w-5 py-1 pr-2 text-left">
+                          <input
+                            ref={allRef}
+                            type="checkbox"
+                            className="accent-blue-500"
+                            onChange={(e) => toggleAll(direction, e.target.checked)}
+                          />
+                        </th>
                         <th className="py-1 pr-2 text-left">날짜</th>
                         <th className="py-1 pr-2 text-left">거래처</th>
                         <th className="py-1 pr-2 text-left">품목명</th>
@@ -479,6 +561,7 @@ export default function OlbaroTab() {
                     <tbody>
                       {list.map((r) => {
                         const co = getCoInfo(r.companyName, direction);
+                        const isDropdownOpen = activeItemDropdown === r.uid;
                         return (
                           <tr key={r.uid} className="border-b border-neutral-50 last:border-0">
                             <td className="py-1.5 pr-2">
@@ -500,12 +583,53 @@ export default function OlbaroTab() {
                               </span>
                               {!co && <span className="text-red-400"> !</span>}
                             </td>
-                            <td className="py-1.5 pr-2">
-                              <input
-                                value={r.itemName}
-                                onChange={(e) => updateRow(r.uid, 'itemName', e.target.value)}
-                                className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 hover:border-neutral-300 focus:border-blue-400 focus:bg-blue-50 focus:outline-none"
-                              />
+                            <td className="relative py-1.5 pr-2">
+                              {itemNames.length > 0 ? (
+                                <div className="relative">
+                                  <button
+                                    onClick={() => setActiveItemDropdown(isDropdownOpen ? null : r.uid)}
+                                    className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-left hover:border-neutral-300 focus:border-blue-400 focus:bg-blue-50 focus:outline-none"
+                                  >
+                                    {r.itemName || <span className="text-neutral-300">선택</span>}
+                                  </button>
+                                  {isDropdownOpen && (
+                                    <div className="absolute left-0 top-full z-20 mt-0.5 w-40 rounded-lg border border-neutral-200 bg-white shadow-lg">
+                                      {itemNames.map((item) => (
+                                        <button
+                                          key={item.id}
+                                          onClick={() => {
+                                            updateRow(r.uid, 'itemName', item.name);
+                                            setActiveItemDropdown(null);
+                                          }}
+                                          className="block w-full px-3 py-1.5 text-left text-xs hover:bg-neutral-50"
+                                        >
+                                          {item.name}
+                                        </button>
+                                      ))}
+                                      <div className="border-t border-neutral-100">
+                                        <input
+                                          autoFocus
+                                          placeholder="직접 입력"
+                                          defaultValue={r.itemName}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              updateRow(r.uid, 'itemName', e.currentTarget.value);
+                                              setActiveItemDropdown(null);
+                                            }
+                                          }}
+                                          className="w-full px-3 py-1.5 text-xs outline-none placeholder:text-neutral-300"
+                                        />
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <input
+                                  value={r.itemName}
+                                  onChange={(e) => updateRow(r.uid, 'itemName', e.target.value)}
+                                  className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 hover:border-neutral-300 focus:border-blue-400 focus:bg-blue-50 focus:outline-none"
+                                />
+                              )}
                             </td>
                             <td className="py-1.5">
                               <input
@@ -550,6 +674,56 @@ export default function OlbaroTab() {
           </button>
         </div>
       )}
+
+      {/* 품목명 관리 */}
+      <div className="rounded-xl border border-neutral-200 bg-white">
+        <button
+          onClick={() => setShowItemMgmt((v) => !v)}
+          className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-neutral-700"
+        >
+          <span>품목명 관리 <span className="font-normal text-neutral-400">({itemNames.length}개)</span></span>
+          <span className="text-neutral-400">{showItemMgmt ? '▲' : '▼'}</span>
+        </button>
+
+        {showItemMgmt && (
+          <div className="border-t border-neutral-100 p-4">
+            {itemNames.length > 0 && (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {itemNames.map((item) => (
+                  <div key={item.id} className="flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 pl-3 pr-1 py-1 text-xs">
+                    <span>{item.name}</span>
+                    <button
+                      onClick={() => void deleteItemName(item.id)}
+                      className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-200 text-neutral-500 hover:bg-red-100 hover:text-red-600"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2 text-xs">
+              <input
+                value={newItemName}
+                onChange={(e) => setNewItemName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void addItemName(); }}
+                placeholder="품목명 입력"
+                className="flex-1 rounded border border-neutral-300 px-2 py-1.5"
+              />
+              <button
+                onClick={() => void addItemName()}
+                disabled={!newItemName.trim()}
+                className="rounded-lg bg-neutral-700 px-3 py-1.5 font-semibold text-white disabled:opacity-40"
+              >
+                추가
+              </button>
+            </div>
+            {itemMgmtError && (
+              <p className="mt-1.5 text-xs text-red-600">{itemMgmtError}</p>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 거래처 매핑 관리 */}
       <div className="rounded-xl border border-neutral-200 bg-white">
@@ -783,6 +957,9 @@ export default function OlbaroTab() {
               placeholder="상세주소"
               className="rounded border border-neutral-300 px-2 py-1.5"
             />
+            {quickMap.error && (
+              <p className="text-xs text-red-600">{quickMap.error}</p>
+            )}
           </div>
           <div className="mt-4 flex gap-2">
             <button
@@ -800,6 +977,13 @@ export default function OlbaroTab() {
             </button>
           </div>
         </div>
+      </div>
+    )}
+
+    {/* 성공 토스트 */}
+    {toast && (
+      <div className="fixed bottom-28 left-1/2 z-50 -translate-x-1/2 rounded-full bg-neutral-800 px-5 py-2.5 text-sm font-medium text-white shadow-lg">
+        {toast}
       </div>
     )}
     </>

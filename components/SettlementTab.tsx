@@ -462,6 +462,7 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
   async function toggleMonthlySettlement(companyId: number | null, companyName: string, current: boolean) {
     if (!companyId) return;
     await supabase.from('companies').update({ is_monthly_settlement: !current }).eq('id', companyId);
+    await onCompanyAdded();
   }
 
   async function openDeliveryNoteModal(companyName: string, companyId: number | null, factory: string) {
