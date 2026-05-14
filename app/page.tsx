@@ -11,7 +11,6 @@ import CalendarTab from '../components/CalendarTab';
 import StockTab from '../components/StockTab';
 import SettlementTab from '../components/SettlementTab';
 import FinanceCalendarTab from '../components/FinanceCalendarTab';
-import OlbaroTab from '../components/OlbaroTab';
 import QuickPanel, { EMPTY_PANEL } from '../components/QuickPanel';
 
 const ADMIN_EMAIL = 'sj_advisory@naver.com';
@@ -144,7 +143,6 @@ export default function Page() {
     { key: 'stock', icon: '📊', label: '재고' },
     ...(canViewFinance ? [{ key: 'settlement' as TabKey, icon: '🧾', label: '정산' }] : []),
     ...(canViewFinance ? [{ key: 'finance-calendar' as TabKey, icon: '📅', label: '정산달력' }] : []),
-    ...(canViewFinance ? [{ key: 'olbaro' as TabKey, icon: '♻️', label: '올바로' }] : []),
   ];
 
   const TAB_TITLE: Record<TabKey, string> = {
@@ -153,7 +151,6 @@ export default function Page() {
     stock: '재고',
     settlement: '정산',
     'finance-calendar': '정산달력',
-    olbaro: '올바로',
   };
 
   if (checkingAuth) return null;
@@ -227,9 +224,6 @@ export default function Page() {
               )}
               {activeTab === 'finance-calendar' && canViewFinance && (
                 <FinanceCalendarTab />
-              )}
-              {activeTab === 'olbaro' && canViewFinance && (
-                <OlbaroTab />
               )}
             </>
           )}

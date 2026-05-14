@@ -37,6 +37,14 @@ type PaymentWithInvoice = {
   invoiceCumPaid: number;
 };
 
+type OlbaroSubmission = {
+  id: number;
+  factory: string;
+  downloaded_at: string;
+  submitted: boolean;
+  submitted_at: string | null;
+};
+
 type InvoiceEditSheet = {
   open: boolean;
   invoice: InvoiceWithDetails | null;
@@ -134,6 +142,7 @@ export default function FinanceCalendarTab() {
   const [categories, setCategories] = useState<string[]>([]);
   const [categoryListOpen, setCategoryListOpen] = useState(false);
   const [addCategoryPrompt, setAddCategoryPrompt] = useState<string | null>(null);
+  const [olbaroSubmissions, setOlbaroSubmissions] = useState<OlbaroSubmission[]>([]);
 
   // ── 패치 ──
   async function fetchInvoices() {
@@ -197,6 +206,20 @@ export default function FinanceCalendarTab() {
     if (data) setCategories((data as { name: string }[]).map((d) => d.name));
   }
 
+  const fetchOlbaroSubmissions = useCallback(async (y: number, m: number) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const from = `${y}-${pad(m + 1)}-01`;
+    const nextM = m === 11 ? 0 : m + 1;
+    const nextY = m === 11 ? y + 1 : y;
+    const to = `${nextY}-${pad(nextM + 1)}-01`;
+    const { data, error } = await supabase
+      .from('olbaro_submissions').select('*')
+      .gte('downloaded_at', from).lt('downloaded_at', to)
+      .order('downloaded_at', { ascending: true });
+    if (error) throw error;
+    setOlbaroSubmissions((data ?? []) as OlbaroSubmission[]);
+  }, []);
+
   async function ensureRecurringCashFlows(y: number, m: number) {
     const pad = (n: number) => String(n).padStart(2, '0');
     const { data: templates } = await supabase.from('cash_flows').select('*').eq('is_recurring', true);
@@ -235,6 +258,7 @@ export default function FinanceCalendarTab() {
           ensureRecurringCashFlows(today.getFullYear(), today.getMonth()),
           fetchMonthPayments(today.getFullYear(), today.getMonth()),
           fetchCategories(),
+          fetchOlbaroSubmissions(today.getFullYear(), today.getMonth()),
         ]);
       } catch (e) { setErrorText(getErrorMessage(e)); }
       finally { setLoading(false); }
@@ -246,7 +270,8 @@ export default function FinanceCalendarTab() {
   useEffect(() => {
     void fetchCashFlows(year, month).catch((e) => setErrorText(getErrorMessage(e)));
     void fetchMonthPayments(year, month).catch((e) => setErrorText(getErrorMessage(e)));
-  }, [year, month, fetchCashFlows, fetchMonthPayments]);
+    void fetchOlbaroSubmissions(year, month).catch((e) => setErrorText(getErrorMessage(e)));
+  }, [year, month, fetchCashFlows, fetchMonthPayments, fetchOlbaroSubmissions]);
 
   // 결제 후 invoices + monthPayments 갱신
   async function refreshAfterPayment() {
@@ -287,6 +312,11 @@ export default function FinanceCalendarTab() {
   );
   const paymentDates = new Set<string>(filteredPayments.map((p) => p.date.slice(0, 10)));
 
+  const olbaroPendingDates = new Set<string>();
+  olbaroSubmissions.forEach(s => {
+    if (!s.submitted) olbaroPendingDates.add(s.downloaded_at.slice(0, 10));
+  });
+
   function toDateKey(day: number) {
     return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
@@ -308,6 +338,9 @@ export default function FinanceCalendarTab() {
     : [];
   const selectedPayments = selectedDate
     ? filteredPayments.filter((p) => p.date.slice(0, 10) === selectedDate)
+    : [];
+  const selectedOlbaroSubmissions = selectedDate
+    ? olbaroSubmissions.filter(s => s.downloaded_at.slice(0, 10) === selectedDate)
     : [];
 
   // 실행 토글 아이템
@@ -442,6 +475,15 @@ export default function FinanceCalendarTab() {
       setRecurringAction(null);
       await fetchCashFlows(year, month);
     } catch (e) { setErrorText(getErrorMessage(e)); }
+  }
+
+  async function handleOlbaroSubmit(id: number) {
+    const { error } = await supabase
+      .from('olbaro_submissions')
+      .update({ submitted: true, submitted_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) { setErrorText(getErrorMessage(error)); return; }
+    await fetchOlbaroSubmissions(year, month);
   }
 
   async function handleRevertPayment(paymentId: number) {
@@ -614,10 +656,11 @@ export default function FinanceCalendarTab() {
                 <span className={cn('text-sm font-medium', isSelected ? 'text-white' : dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-neutral-800')}>
                   {day}
                 </span>
-                {(hasInvoice || hasPayment) && (
+                {(hasInvoice || hasPayment || olbaroPendingDates.has(key)) && (
                   <div className="flex gap-0.5 mt-0.5">
                     {hasInvoice && <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-blue-400')} />}
                     {hasPayment && <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-green-500')} />}
+                    {olbaroPendingDates.has(key) && <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-yellow-400')} />}
                   </div>
                 )}
               </button>
@@ -634,6 +677,9 @@ export default function FinanceCalendarTab() {
         <div className="flex items-center gap-1 text-[11px] text-neutral-400">
           <span className="h-2 w-2 rounded-full bg-green-500 inline-block" />실행
         </div>
+        <div className="flex items-center gap-1 text-[11px] text-neutral-400">
+          <span className="h-2 w-2 rounded-full bg-yellow-400 inline-block" />올바로
+        </div>
       </div>
 
       {/* 선택 날짜 내역 */}
@@ -647,6 +693,37 @@ export default function FinanceCalendarTab() {
               + ★
             </button>
           </div>
+
+          {/* ── 올바로 ── */}
+          {selectedOlbaroSubmissions.length > 0 && (
+            <div className="rounded-3xl border border-yellow-200 bg-yellow-50 overflow-hidden shadow-sm">
+              <div className="px-4 py-3">
+                <p className="text-sm font-bold text-yellow-800 mb-2">♻️ 올바로 엑셀 다운로드</p>
+                <div className="space-y-2">
+                  {selectedOlbaroSubmissions.map(s => (
+                    <div key={s.id} className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-semibold text-yellow-900">{s.factory}</span>
+                        <span className="text-xs text-yellow-600 ml-2">
+                          {new Date(s.downloaded_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      {s.submitted ? (
+                        <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">제출 완료</span>
+                      ) : (
+                        <button
+                          onClick={() => void handleOlbaroSubmit(s.id)}
+                          className="rounded-full border border-yellow-300 bg-white px-2.5 py-1 text-xs font-semibold text-yellow-700"
+                        >
+                          제출 완료
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* ── 실행 토글 ── */}
           <div className="rounded-3xl border border-neutral-200 bg-white overflow-hidden shadow-sm">
@@ -1025,7 +1102,7 @@ export default function FinanceCalendarTab() {
           </div>
 
           {/* 내역 없을 때 */}
-          {!hasExecuted && !hasPlanned && (
+          {!hasExecuted && !hasPlanned && selectedOlbaroSubmissions.length === 0 && (
             <div className="rounded-2xl border border-dashed border-neutral-300 bg-white px-4 py-6 text-center text-sm text-neutral-500">
               이 날 내역이 없어.
             </div>
