@@ -498,6 +498,13 @@ export default function FinanceCalendarTab() {
     await fetchOlbaroSubmissions(year, month);
   }
 
+  async function handleOlbaroDelete(id: number) {
+    if (!window.confirm('이 올바로 기록을 삭제할까요?')) return;
+    const { error } = await supabase.from('olbaro_submissions').delete().eq('id', id);
+    if (error) { setErrorText(getErrorMessage(error)); return; }
+    await fetchOlbaroSubmissions(year, month);
+  }
+
   async function handleRevertPayment(paymentId: number) {
     try {
       const { error } = await supabase.from('payments').delete().eq('id', paymentId);
@@ -726,7 +733,7 @@ export default function FinanceCalendarTab() {
                       {s.submitted ? '✓ 올바로 전송 완료' : '올바로 전송 전'}
                     </p>
                   </div>
-                  <div className="ml-3 shrink-0">
+                  <div className="ml-3 flex shrink-0 gap-1.5">
                     {s.submitted ? (
                       <button
                         onClick={() => void handleOlbaroUnsubmit(s.id)}
@@ -742,6 +749,12 @@ export default function FinanceCalendarTab() {
                         전송 완료
                       </button>
                     )}
+                    <button
+                      onClick={() => void handleOlbaroDelete(s.id)}
+                      className="rounded-xl border border-red-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-red-500 hover:bg-red-50"
+                    >
+                      삭제
+                    </button>
                   </div>
                 </div>
               ))}
