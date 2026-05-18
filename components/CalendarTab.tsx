@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase/client';
 import { Company, InventoryItem, InventoryLogRow, Vehicle } from '../lib/types';
 import { cn, formatDateTime, getErrorMessage, todayString } from '../lib/utils';
@@ -11,6 +12,7 @@ type Props = {
   companies: Company[];
   onRefreshLogs: () => Promise<void>;
   onRefreshInventory: () => Promise<void>;
+  isAdmin?: boolean;
 };
 
 type SettlementModal = {
@@ -70,7 +72,8 @@ function logDateKey(log: InventoryLogRow): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export default function CalendarTab({ logs, inventory, companies, onRefreshLogs, onRefreshInventory }: Props) {
+export default function CalendarTab({ logs, inventory, companies, onRefreshLogs, onRefreshInventory, isAdmin }: Props) {
+  const router = useRouter();
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
@@ -442,9 +445,19 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
           ← 이전
         </button>
         <p className="text-base font-bold">{year}년 {MONTH_NAMES[month]}</p>
-        <button onClick={nextMonth} className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold text-neutral-700">
-          다음 →
-        </button>
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <button
+              onClick={() => router.push('/vehicles')}
+              className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-600"
+            >
+              🚗 차량관리
+            </button>
+          )}
+          <button onClick={nextMonth} className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold text-neutral-700">
+            다음 →
+          </button>
+        </div>
       </div>
 
       {/* 달력 */}

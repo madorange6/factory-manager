@@ -204,6 +204,7 @@ export default function Page() {
                   companies={companies}
                   onRefreshLogs={fetchLogs}
                   onRefreshInventory={fetchInventory}
+                  isAdmin={isAdmin}
                 />
               )}
               {activeTab === 'stock' && (
