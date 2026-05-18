@@ -35,26 +35,22 @@ type Props = {
 };
 
 type ContextMenu = { message: MessageRow } | null;
+type Thread = { root: MessageRow; replies: MessageRow[] };
 
-// 메시지 트리 구성: root → replies 순서로 평탄화
-function organizeMessages(messages: MessageRow[]): MessageRow[] {
-  const roots = messages.filter((m) => !m.parent_id);
+function buildThreads(messages: MessageRow[]): Thread[] {
   const replyMap = new Map<number, MessageRow[]>();
   messages.forEach((m) => {
-    if (m.parent_id) {
-      const existing = replyMap.get(m.parent_id) ?? [];
-      replyMap.set(m.parent_id, [...existing, m]);
+    if (m.parent_id != null) {
+      const arr = replyMap.get(m.parent_id) ?? [];
+      replyMap.set(m.parent_id, [...arr, m]);
     }
   });
-  const result: MessageRow[] = [];
-  roots.forEach((root) => {
-    result.push(root);
-    const replies = (replyMap.get(root.id) ?? []).sort((a, b) =>
-      a.created_at.localeCompare(b.created_at)
-    );
-    result.push(...replies);
-  });
-  return result;
+  return messages
+    .filter((m) => m.parent_id == null)
+    .map((root) => ({
+      root,
+      replies: (replyMap.get(root.id) ?? []).sort((a, b) => a.created_at.localeCompare(b.created_at)),
+    }));
 }
 
 export default function ChatTab({
@@ -98,8 +94,8 @@ export default function ChatTab({
     };
   }
 
-  async function insertMessage(content: string, messageType: MessageRow['message_type'], parentId?: number | null) {
-    const { error } = await supabase.from('messages').insert({
+  async function insertMessage(content: string, messageType: MessageRow['message_type'], parentId?: number | null): Promise<MessageRow> {
+    const { data, error } = await supabase.from('messages').insert({
       content,
       message_type: messageType,
       source: 'user',
@@ -107,8 +103,9 @@ export default function ChatTab({
       user_email: currentUserEmail,
       user_name: currentUserName,
       parent_id: parentId ?? null,
-    });
+    }).select('id, content, message_type, source, created_at, user_id, user_email, user_name, is_important, parent_id').single();
     if (error) throw error;
+    return data as MessageRow;
   }
 
   async function saveUserMessage(content: string, type: MessageRow['message_type'] = 'chat', parentId?: number | null) {
@@ -116,7 +113,8 @@ export default function ChatTab({
     setMessages((prev) => [...prev, temp]);
     setTimeout(scrollToBottom, 10);
     try {
-      await insertMessage(content, type, parentId);
+      const real = await insertMessage(content, type, parentId);
+      setMessages((prev) => prev.map((m) => m.id === temp.id ? real : m));
     } catch (error) {
       setMessages((prev) => prev.filter((m) => m.id !== temp.id));
       throw error;
@@ -182,10 +180,13 @@ export default function ChatTab({
     );
   }
 
+  const threads = buildThreads(messages);
+
   function handleSearchChange(q: string) {
     const indices: number[] = [];
-    organized.forEach((msg, idx) => {
-      if (q.trim() && msg.content.toLowerCase().includes(q.toLowerCase())) indices.push(idx);
+    threads.forEach((thread, idx) => {
+      const texts = [thread.root, ...thread.replies].map((m) => m.content.toLowerCase());
+      if (q.trim() && texts.some((t) => t.includes(q.toLowerCase()))) indices.push(idx);
     });
     setSearch({ open: true, query: q, resultIndices: indices, currentIdx: 0 });
     if (indices.length > 0) {
@@ -209,20 +210,16 @@ export default function ChatTab({
   async function openDollarCompany(companyId: number | null, companyName: string) {
     setDollarTrigger({ step: 'prices', search: '', selectedCompanyId: companyId, selectedCompanyName: companyName, priceItems: [], loadingPrices: true });
     try {
-      // unit_prices 전체 로드
       const { data: allPrices } = await supabase.from('unit_prices').select('inventory_item_id, unit_price');
       const priceMap = new Map((allPrices ?? []).map((p: { inventory_item_id: number; unit_price: number }) => [p.inventory_item_id, p.unit_price]));
 
-      // 거래처 연관 품목 (inventory_logs 기반)
       let query = supabase.from('inventory_logs').select('item_id').not('item_id', 'is', null);
       if (companyId) query = query.eq('company_id', companyId);
       else query = query.eq('company_name', companyName);
       const { data: logData } = await query;
       let itemIds = [...new Set((logData ?? []).map((l: { item_id: number }) => l.item_id).filter(Boolean))];
 
-      // inventory_logs에 없으면 unit_prices 등록된 품목 전체로 fallback
       if (itemIds.length === 0) itemIds = [...priceMap.keys()];
-
       if (itemIds.length === 0) {
         setDollarTrigger((p) => p ? { ...p, loadingPrices: false, priceItems: [] } : null);
         return;
@@ -249,7 +246,6 @@ export default function ChatTab({
     setTimeout(() => inputRef.current?.focus(), 100);
   }
 
-  // 항목 5: 중요 표시 토글
   async function handleToggleImportant(message: MessageRow) {
     const newVal = !message.is_important;
     const { error } = await supabase.from('messages').update({ is_important: newVal }).eq('id', message.id);
@@ -259,24 +255,21 @@ export default function ChatTab({
     setContextMenu(null);
   }
 
-  // 항목 5: 메시지 삭제
   async function handleDeleteMessage(message: MessageRow) {
     if (!window.confirm('이 메시지를 삭제할까요?')) return;
     const { error } = await supabase.from('messages').delete().eq('id', message.id);
     if (!error) {
-      setMessages((prev) => prev.filter((m) => m.id !== message.id));
+      setMessages((prev) => prev.filter((m) => m.id !== message.id && m.parent_id !== message.id));
     }
     setContextMenu(null);
   }
 
-  // 항목 5: 댓글 달기 선택
   function handleStartReply(message: MessageRow) {
     setReplyTo(message);
     setContextMenu(null);
     setTimeout(() => inputRef.current?.focus(), 100);
   }
 
-  // 항목 5: 길게 누르기 시작
   function startLongPress(message: MessageRow) {
     longPressTimer.current = setTimeout(() => {
       setContextMenu({ message });
@@ -290,8 +283,6 @@ export default function ChatTab({
     }
   }
 
-  const organized = organizeMessages(messages);
-
   return (
     <div className="flex flex-col h-full">
       {errorText && (
@@ -299,7 +290,6 @@ export default function ChatTab({
       )}
 
       <div className="flex-1 overflow-y-auto px-3 py-4 pb-[180px]">
-
         <div className="mb-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
           <p className="text-sm font-semibold">빠른 사용법</p>
           <p className="mt-1 text-xs leading-5 text-neutral-500">⚡ 버튼 또는 / 입력으로 빠른입력 열기</p>
@@ -308,42 +298,41 @@ export default function ChatTab({
         </div>
 
         <div className="space-y-3">
-          {organized.map((message, msgIdx) => {
-            const isReply = !!message.parent_id;
-            const isUser = message.message_type === 'chat' || message.message_type === 'command';
-            const isCommand = message.message_type === 'command';
-            const isSystemSource = message.source === 'system';
-            const isQuickInput = message.source === 'quick_input';
-            const isImportant = !!message.is_important;
+          {threads.map((thread, threadIdx) => {
+            const { root, replies } = thread;
+            const isUser = root.message_type === 'chat' || root.message_type === 'command';
+            const isCommand = root.message_type === 'command';
+            const isSystemSource = root.source === 'system';
+            const isQuickInput = root.source === 'quick_input';
+            const isImportant = !!root.is_important;
+            const isSearchHit = search.open && search.query.trim() && search.resultIndices[search.currentIdx] === threadIdx;
 
-            const isSearchHit = search.open && search.query.trim() && search.resultIndices[search.currentIdx] === msgIdx;
             return (
               <div
-                key={message.id}
-                ref={(el) => { messageRefs.current[msgIdx] = el; }}
-                className={cn('flex', isUser ? 'justify-end' : 'justify-start', isReply && 'pl-6', isSearchHit && 'ring-2 ring-yellow-400 rounded-2xl')}
-                onMouseDown={() => startLongPress(message)}
-                onMouseUp={cancelLongPress}
-                onMouseLeave={cancelLongPress}
-                onTouchStart={() => startLongPress(message)}
-                onTouchEnd={cancelLongPress}
-                onTouchMove={cancelLongPress}
-                onContextMenu={(e) => { e.preventDefault(); setContextMenu({ message }); }}
+                key={root.id}
+                ref={(el) => { messageRefs.current[threadIdx] = el; }}
+                className={cn('flex', isUser ? 'justify-end' : 'justify-start', isSearchHit && 'ring-2 ring-yellow-400 rounded-2xl')}
               >
                 <div className="max-w-[84%]">
-                  {isReply && (
-                    <p className={cn('mb-0.5 text-[10px] px-1', isUser ? 'text-right text-neutral-400' : 'text-neutral-400')}>↩ 댓글</p>
-                  )}
-                  <div className={cn(
-                    'rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm select-none',
-                    isUser && !isCommand && !isSystemSource && !isQuickInput && 'rounded-br-md bg-neutral-900 text-white',
-                    isUser && !isCommand && isSystemSource && 'rounded-br-md border border-teal-200 bg-teal-50 text-teal-900',
-                    isUser && !isCommand && isQuickInput && 'rounded-br-md border border-neutral-300 bg-neutral-100 text-neutral-700',
-                    isCommand && 'rounded-br-md border border-blue-200 bg-blue-50 text-blue-900',
-                    !isUser && 'rounded-bl-md border border-neutral-200 bg-white text-neutral-800',
-                    isImportant && isUser && 'ring-2 ring-yellow-400',
-                    isImportant && !isUser && 'ring-2 ring-yellow-400',
-                  )}>
+                  <div
+                    className={cn(
+                      'rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm select-none',
+                      isUser && !isCommand && !isSystemSource && !isQuickInput && 'rounded-br-md bg-neutral-900 text-white',
+                      isUser && !isCommand && isSystemSource && 'rounded-br-md border border-teal-200 bg-teal-50 text-teal-900',
+                      isUser && !isCommand && isQuickInput && 'rounded-br-md border border-neutral-300 bg-neutral-100 text-neutral-700',
+                      isCommand && 'rounded-br-md border border-blue-200 bg-blue-50 text-blue-900',
+                      !isUser && 'rounded-bl-md border border-neutral-200 bg-white text-neutral-800',
+                      isImportant && 'ring-2 ring-yellow-400',
+                    )}
+                    onMouseDown={() => startLongPress(root)}
+                    onMouseUp={cancelLongPress}
+                    onMouseLeave={cancelLongPress}
+                    onTouchStart={() => startLongPress(root)}
+                    onTouchEnd={cancelLongPress}
+                    onTouchMove={cancelLongPress}
+                    onContextMenu={(e) => { e.preventDefault(); setContextMenu({ message: root }); }}
+                  >
+                    {/* 헤더 */}
                     <div className="mb-1 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5">
                         <p className={cn('text-[11px] font-semibold uppercase tracking-wide', !isUser ? 'text-neutral-400' : isCommand ? 'text-blue-500' : 'text-neutral-300')}>
@@ -351,20 +340,55 @@ export default function ChatTab({
                         </p>
                         {isImportant && <span className="text-sm leading-none">⭐</span>}
                       </div>
-                      {(message.user_name || message.user_email) && (
+                      {(root.user_name || root.user_email) && (
                         <p className={cn('truncate text-[11px]', isUser ? 'text-neutral-300' : 'text-neutral-500')}>
-                          {message.user_name || message.user_email}
+                          {root.user_name || root.user_email}
                         </p>
                       )}
                     </div>
-                    {message.content.startsWith('https://') && message.content.includes('chat-images') ? (
-                      <img src={message.content} alt="uploaded" className="max-w-full rounded-xl" />
+
+                    {/* 원글 내용 */}
+                    {root.content.startsWith('https://') && root.content.includes('chat-images') ? (
+                      <img src={root.content} alt="uploaded" className="max-w-full rounded-xl" />
                     ) : (
-                      <p className="break-words whitespace-pre-wrap">{search.open && search.query.trim() ? highlightText(message.content, search.query) : message.content}</p>
+                      <p className="break-words whitespace-pre-wrap">
+                        {search.open && search.query.trim() ? highlightText(root.content, search.query) : root.content}
+                      </p>
+                    )}
+
+                    {/* 댓글 */}
+                    {replies.length > 0 && (
+                      <div className={cn('mt-2 space-y-2 border-t pt-2', isUser ? 'border-white/20' : 'border-neutral-100')}>
+                        {replies.map((reply) => (
+                          <div
+                            key={reply.id}
+                            className={cn('select-none', !!reply.is_important && 'ring-1 ring-yellow-400 rounded-xl px-1 py-0.5')}
+                            onMouseDown={(e) => { e.stopPropagation(); startLongPress(reply); }}
+                            onMouseUp={cancelLongPress}
+                            onMouseLeave={cancelLongPress}
+                            onTouchStart={(e) => { e.stopPropagation(); startLongPress(reply); }}
+                            onTouchEnd={cancelLongPress}
+                            onTouchMove={cancelLongPress}
+                            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ message: reply }); }}
+                          >
+                            <p className={cn('text-[10px] mb-0.5 font-medium', isUser ? 'text-neutral-400' : 'text-neutral-400')}>
+                              ↩ {reply.user_name || reply.user_email || ''}
+                              {!!reply.is_important && ' ⭐'}
+                            </p>
+                            <p className={cn('break-words whitespace-pre-wrap text-sm', isUser ? 'text-neutral-100' : 'text-neutral-700')}>
+                              {search.open && search.query.trim() ? highlightText(reply.content, search.query) : reply.content}
+                            </p>
+                            <p className={cn('mt-0.5 text-[10px]', isUser ? 'text-neutral-500' : 'text-neutral-400')}>
+                              {formatChatDateTime(reply.created_at)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
+
                   <p className={cn('mt-1 px-1 text-[11px] text-neutral-400', isUser ? 'text-right' : 'text-left')}>
-                    {formatChatDateTime(message.created_at)}
+                    {formatChatDateTime(root.created_at)}
                   </p>
                 </div>
               </div>
@@ -405,7 +429,6 @@ export default function ChatTab({
           </button>
         </div>
 
-        {/* 항목 5: 댓글 대상 표시 */}
         {replyTo && (
           <div className="mb-2 flex items-center justify-between rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2">
             <p className="text-xs text-blue-700 truncate flex-1">
@@ -519,7 +542,7 @@ export default function ChatTab({
         </div>
       )}
 
-      {/* 항목 5: 컨텍스트 메뉴 Bottom Sheet */}
+      {/* 컨텍스트 메뉴 */}
       {contextMenu && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setContextMenu(null)}>
           <div className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-10" onClick={(e) => e.stopPropagation()}>
@@ -532,7 +555,6 @@ export default function ChatTab({
                 className="w-full rounded-2xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm font-semibold text-yellow-800">
                 {contextMenu.message.is_important ? '⭐ 중요 해제' : '⭐ 중요 표시'}
               </button>
-              {/* 댓글 달기 — 루트 메시지에만 표시 */}
               {!contextMenu.message.parent_id && (
                 <button
                   onClick={() => handleStartReply(contextMenu.message)}
