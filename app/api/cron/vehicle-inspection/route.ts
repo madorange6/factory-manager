@@ -84,7 +84,7 @@ export async function GET() {
       }
 
       // D-day
-      if (inspectionDate === todayStr) {
+      if (inspectionDate === todayStr && !isInspected) {
         const msg = `[차량검사 당일]\n${name}(${plate}) 오늘 정기검사일입니다.\n검사일: ${inspectionDate}`;
         await sendSms(phone, msg);
         results.push(`D-day SMS → ${phone}`);
