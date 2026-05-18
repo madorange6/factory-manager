@@ -313,8 +313,11 @@ export default function FinanceCalendarTab() {
   const paymentDates = new Set<string>(filteredPayments.map((p) => p.date.slice(0, 10)));
 
   const olbaroPendingDates = new Set<string>();
+  const olbaroDoneDates = new Set<string>();
   olbaroSubmissions.forEach(s => {
-    if (!s.submitted) olbaroPendingDates.add(s.downloaded_at.slice(0, 10));
+    const key = s.downloaded_at.slice(0, 10);
+    if (s.submitted) olbaroDoneDates.add(key);
+    else olbaroPendingDates.add(key);
   });
 
   function toDateKey(day: number) {
@@ -481,6 +484,15 @@ export default function FinanceCalendarTab() {
     const { error } = await supabase
       .from('olbaro_submissions')
       .update({ submitted: true, submitted_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) { setErrorText(getErrorMessage(error)); return; }
+    await fetchOlbaroSubmissions(year, month);
+  }
+
+  async function handleOlbaroUnsubmit(id: number) {
+    const { error } = await supabase
+      .from('olbaro_submissions')
+      .update({ submitted: false, submitted_at: null })
       .eq('id', id);
     if (error) { setErrorText(getErrorMessage(error)); return; }
     await fetchOlbaroSubmissions(year, month);
@@ -656,11 +668,12 @@ export default function FinanceCalendarTab() {
                 <span className={cn('text-sm font-medium', isSelected ? 'text-white' : dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-neutral-800')}>
                   {day}
                 </span>
-                {(hasInvoice || hasPayment || olbaroPendingDates.has(key)) && (
+                {(hasInvoice || hasPayment || olbaroPendingDates.has(key) || olbaroDoneDates.has(key)) && (
                   <div className="flex gap-0.5 mt-0.5">
                     {hasInvoice && <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-blue-400')} />}
                     {hasPayment && <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-green-500')} />}
                     {olbaroPendingDates.has(key) && <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-yellow-400')} />}
+                    {!olbaroPendingDates.has(key) && olbaroDoneDates.has(key) && <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-neutral-400')} />}
                   </div>
                 )}
               </button>
@@ -678,7 +691,10 @@ export default function FinanceCalendarTab() {
           <span className="h-2 w-2 rounded-full bg-green-500 inline-block" />실행
         </div>
         <div className="flex items-center gap-1 text-[11px] text-neutral-400">
-          <span className="h-2 w-2 rounded-full bg-yellow-400 inline-block" />올바로
+          <span className="h-2 w-2 rounded-full bg-yellow-400 inline-block" />올바로(미전송)
+        </div>
+        <div className="flex items-center gap-1 text-[11px] text-neutral-400">
+          <span className="h-2 w-2 rounded-full bg-neutral-400 inline-block" />올바로(전송완료)
         </div>
       </div>
 
@@ -696,32 +712,39 @@ export default function FinanceCalendarTab() {
 
           {/* ── 올바로 ── */}
           {selectedOlbaroSubmissions.length > 0 && (
-            <div className="rounded-3xl border border-yellow-200 bg-yellow-50 overflow-hidden shadow-sm">
-              <div className="px-4 py-3">
-                <p className="text-sm font-bold text-yellow-800 mb-2">♻️ 올바로 엑셀 다운로드</p>
-                <div className="space-y-2">
-                  {selectedOlbaroSubmissions.map(s => (
-                    <div key={s.id} className="flex items-center justify-between">
-                      <div>
-                        <span className="text-sm font-semibold text-yellow-900">{s.factory}</span>
-                        <span className="text-xs text-yellow-600 ml-2">
-                          {new Date(s.downloaded_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                      {s.submitted ? (
-                        <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">제출 완료</span>
-                      ) : (
-                        <button
-                          onClick={() => void handleOlbaroSubmit(s.id)}
-                          className="rounded-full border border-yellow-300 bg-white px-2.5 py-1 text-xs font-semibold text-yellow-700"
-                        >
-                          제출 완료
-                        </button>
-                      )}
-                    </div>
-                  ))}
+            <div className="flex flex-col gap-2">
+              {selectedOlbaroSubmissions.map(s => (
+                <div key={s.id} className={cn(
+                  'flex items-center justify-between rounded-2xl border px-4 py-3',
+                  s.submitted ? 'border-neutral-200 bg-neutral-50' : 'border-yellow-300 bg-yellow-50',
+                )}>
+                  <div>
+                    <p className={cn('text-sm font-semibold', s.submitted ? 'text-neutral-400' : 'text-yellow-800')}>
+                      ♻️ {s.factory}
+                    </p>
+                    <p className={cn('text-xs mt-0.5', s.submitted ? 'text-neutral-400' : 'text-yellow-600')}>
+                      {s.submitted ? '✓ 올바로 전송 완료' : '올바로 전송 전'}
+                    </p>
+                  </div>
+                  <div className="ml-3 shrink-0">
+                    {s.submitted ? (
+                      <button
+                        onClick={() => void handleOlbaroUnsubmit(s.id)}
+                        className="rounded-xl border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-500 hover:bg-neutral-50"
+                      >
+                        완료 취소
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => void handleOlbaroSubmit(s.id)}
+                        className="rounded-xl bg-yellow-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-yellow-600"
+                      >
+                        전송 완료
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              ))}
             </div>
           )}
 
