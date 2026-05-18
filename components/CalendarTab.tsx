@@ -449,9 +449,9 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
           {isAdmin && (
             <button
               onClick={() => router.push('/vehicles')}
-              className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-600"
+              className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-base"
             >
-              🚗 차량관리
+              🚗
             </button>
           )}
           <button onClick={nextMonth} className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm font-semibold text-neutral-700">
