@@ -500,8 +500,9 @@ export default function FinanceCalendarTab() {
 
   async function handleOlbaroDelete(id: number) {
     if (!window.confirm('이 올바로 기록을 삭제할까요?')) return;
-    const { error } = await supabase.from('olbaro_submissions').delete().eq('id', id);
-    if (error) { setErrorText(getErrorMessage(error)); return; }
+    const { error, count } = await supabase.from('olbaro_submissions').delete({ count: 'exact' }).eq('id', id);
+    if (error) { window.alert('에러: ' + JSON.stringify(error)); return; }
+    window.alert(`삭제됨: ${count ?? 0}행`);
     await fetchOlbaroSubmissions(year, month);
   }
 
