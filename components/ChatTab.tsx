@@ -210,7 +210,9 @@ export default function ChatTab({
   async function openDollarCompany(companyId: number | null, companyName: string) {
     setDollarTrigger({ step: 'prices', search: '', selectedCompanyId: companyId, selectedCompanyName: companyName, priceItems: [], loadingPrices: true });
     try {
-      const { data: allPrices } = await supabase.from('unit_prices').select('inventory_item_id, unit_price');
+      let priceQuery = supabase.from('unit_prices').select('inventory_item_id, unit_price');
+      if (companyId) priceQuery = priceQuery.eq('company_id', companyId);
+      const { data: allPrices } = await priceQuery;
       const priceMap = new Map((allPrices ?? []).map((p: { inventory_item_id: number; unit_price: number }) => [p.inventory_item_id, p.unit_price]));
 
       let query = supabase.from('inventory_logs').select('item_id').not('item_id', 'is', null);

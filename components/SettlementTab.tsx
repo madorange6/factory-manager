@@ -665,8 +665,8 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
         itemIds.length > 0
           ? supabase.from('inventory_items').select('id, name').in('id', itemIds).order('name').then((r) => r.data)
           : Promise.resolve([]),
-        itemIds.length > 0
-          ? supabase.from('unit_prices').select('*').in('inventory_item_id', itemIds).then((r) => r.data)
+        itemIds.length > 0 && resolvedCompanyId
+          ? supabase.from('unit_prices').select('*').eq('company_id', resolvedCompanyId).in('inventory_item_id', itemIds).then((r) => r.data)
           : Promise.resolve([]),
         resolvedCompanyId
           ? supabase.from('company_memos').select('*').eq('company_id', resolvedCompanyId).order('created_at', { ascending: false }).then((r) => r.data)
@@ -695,13 +695,15 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
     if (toSave.length === 0) { setUnitPriceModal(EMPTY_UNIT_PRICE_MODAL); return; }
     try {
       setUnitPriceModal((p) => ({ ...p, saving: true, error: '' }));
+      const companyId = unitPriceModal.companyId;
       for (const item of toSave) {
         const { error } = await supabase.from('unit_prices').upsert({
+          company_id: companyId,
           inventory_item_id: item.itemId,
           unit_price: Number(item.unitPrice),
           memo: item.memo.trim() || null,
           updated_at: new Date().toISOString(),
-        }, { onConflict: 'inventory_item_id' });
+        }, { onConflict: 'company_id,inventory_item_id' });
         if (error) throw error;
       }
       setUnitPriceModal(EMPTY_UNIT_PRICE_MODAL);

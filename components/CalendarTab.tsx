@@ -242,7 +242,10 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
     const item = inventoryMap.get(log.item_id);
     setModal({ open: true, log, itemName: item?.name ?? '', unitPrice: '', saving: false, error: '' });
     if (item) {
-      const { data } = await supabase.from('unit_prices').select('unit_price').eq('inventory_item_id', item.id).maybeSingle();
+      const companyId = log.company_id ?? null;
+      let q = supabase.from('unit_prices').select('unit_price').eq('inventory_item_id', item.id);
+      if (companyId) q = q.eq('company_id', companyId);
+      const { data } = await q.maybeSingle();
       if (data) setModal((p) => ({ ...p, unitPrice: String((data as { unit_price: number }).unit_price) }));
     }
   }
