@@ -16,6 +16,7 @@ type Draft = {
   inspection_cycle: number;
   insurance_date: string;
   insurance_recipient_phone: string;
+  insurance_memo: string;
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -26,6 +27,7 @@ const EMPTY_DRAFT: Draft = {
   inspection_cycle: 12,
   insurance_date: '',
   insurance_recipient_phone: '',
+  insurance_memo: '',
 };
 
 function cn(...cls: Array<string | false | null | undefined>) {
@@ -78,6 +80,7 @@ export default function VehiclesPage() {
       inspection_cycle: draft.inspection_cycle,
       insurance_date: draft.insurance_date || null,
       insurance_recipient_phone: draft.insurance_recipient_phone.trim() || null,
+      insurance_memo: draft.insurance_memo.trim() || null,
     });
     setSaving(false);
     if (error) { setErrorText(getErrorMessage(error)); return; }
@@ -97,6 +100,7 @@ export default function VehiclesPage() {
       inspection_cycle: editDraft.inspection_cycle,
       insurance_date: editDraft.insurance_date || null,
       insurance_recipient_phone: editDraft.insurance_recipient_phone.trim() || null,
+      insurance_memo: editDraft.insurance_memo.trim() || null,
       updated_at: new Date().toISOString(),
     }).eq('id', editId);
     setSaving(false);
@@ -233,6 +237,12 @@ export default function VehiclesPage() {
                             placeholder="보험 담당자 번호 (010-XXXX-XXXX)"
                             className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
                           />
+                          <input
+                            value={editDraft.insurance_memo}
+                            onChange={(e) => setEditDraft((p) => ({ ...p, insurance_memo: e.target.value }))}
+                            placeholder="보험사 / 메모 (선택)"
+                            className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                          />
                         </div>
                       </div>
                       <div className="flex gap-2 pt-1">
@@ -300,13 +310,16 @@ export default function VehiclesPage() {
                               {v.insurance_recipient_phone && (
                                 <p className="mt-0.5 text-xs text-neutral-400">보험 담당: {v.insurance_recipient_phone}</p>
                               )}
+                              {v.insurance_memo && (
+                                <p className="mt-0.5 text-xs text-neutral-400">보험사/메모: {v.insurance_memo}</p>
+                              )}
                             </div>
                           );
                         })()}
                       </div>
                       <div className="flex gap-1.5 shrink-0 ml-2">
                         <button
-                          onClick={() => { setEditId(v.id); setEditDraft({ name: v.name, plate_number: v.plate_number, inspection_date: v.inspection_date, recipient_phone: v.recipient_phone, inspection_cycle: v.inspection_cycle, insurance_date: v.insurance_date ?? '', insurance_recipient_phone: v.insurance_recipient_phone ?? '' }); }}
+                          onClick={() => { setEditId(v.id); setEditDraft({ name: v.name, plate_number: v.plate_number, inspection_date: v.inspection_date, recipient_phone: v.recipient_phone, inspection_cycle: v.inspection_cycle, insurance_date: v.insurance_date ?? '', insurance_recipient_phone: v.insurance_recipient_phone ?? '', insurance_memo: v.insurance_memo ?? '' }); }}
                           className="rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50"
                         >
                           수정
@@ -397,6 +410,12 @@ export default function VehiclesPage() {
                     value={draft.insurance_recipient_phone}
                     onChange={(e) => setDraft((p) => ({ ...p, insurance_recipient_phone: e.target.value }))}
                     placeholder="보험 담당자 번호 (010-XXXX-XXXX)"
+                    className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                  />
+                  <input
+                    value={draft.insurance_memo}
+                    onChange={(e) => setDraft((p) => ({ ...p, insurance_memo: e.target.value }))}
+                    placeholder="보험사 / 메모 (선택)"
                     className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
                   />
                 </div>

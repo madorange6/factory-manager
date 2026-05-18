@@ -118,6 +118,31 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
     await fetchVehicles();
   }
 
+  const [checkingInsuranceId, setCheckingInsuranceId] = useState<string | null>(null);
+
+  async function handleInsuranceDone(vehicle: Vehicle) {
+    setCheckingInsuranceId(vehicle.id);
+    const now = new Date().toISOString();
+    await supabase.from('vehicles').update({
+      is_insured: true,
+      insured_at: now,
+      updated_at: now,
+    }).eq('id', vehicle.id);
+    setCheckingInsuranceId(null);
+    await fetchVehicles();
+  }
+
+  async function handleInsuranceUndo(vehicle: Vehicle) {
+    setCheckingInsuranceId(vehicle.id);
+    await supabase.from('vehicles').update({
+      is_insured: false,
+      insured_at: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', vehicle.id);
+    setCheckingInsuranceId(null);
+    await fetchVehicles();
+  }
+
   const inventoryMap = new Map(inventory.map((item) => [item.id, item]));
 
   const firstDay = new Date(year, month, 1);
@@ -157,8 +182,25 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
     }
   });
 
+  // 이 달 차량 보험 만료일 Map (날짜 → 차량 배열)
+  const vehicleInsuranceMap = new Map<string, Vehicle[]>();
+  vehicles.forEach((v) => {
+    if (!v.insurance_date) return;
+    const d = new Date(v.insurance_date + 'T00:00:00');
+    const cy = d.getFullYear();
+    const cm = d.getMonth();
+    if (cy === year && cm === month) {
+      const key = `${cy}-${String(cm + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (!vehicleInsuranceMap.has(key)) vehicleInsuranceMap.set(key, []);
+      vehicleInsuranceMap.get(key)!.push(v);
+    }
+  });
+
   // 선택된 날짜의 차량 검사 목록
   const selectedVehicles = selectedDate ? (vehicleInspectionMap.get(selectedDate) ?? []) : [];
+
+  // 선택된 날짜의 보험 만료 목록
+  const selectedInsuranceVehicles = selectedDate ? (vehicleInsuranceMap.get(selectedDate) ?? []) : [];
 
   function toDateKey(day: number) {
     return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -426,6 +468,9 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
             const hasInspection = dayVehicles.length > 0;
             // inspection_date가 정확히 이 날인 차량만 is_inspected 반영, 반복 주기 날짜는 항상 빨간색
             const allInspected = hasInspection && dayVehicles.every((v) => v.is_inspected && v.inspection_date === key);
+            const insVehicles = vehicleInsuranceMap.get(key) ?? [];
+            const hasInsurance = insVehicles.length > 0;
+            const allInsured = hasInsurance && insVehicles.every((v) => v.is_insured);
             return (
               <button
                 key={key}
@@ -446,6 +491,9 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
                   )}
                   {hasInspection && (
                     <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : allInspected ? 'bg-neutral-400' : 'bg-red-500')} />
+                  )}
+                  {hasInsurance && (
+                    <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : allInsured ? 'bg-neutral-400' : 'bg-yellow-400')} />
                   )}
                 </div>
               </button>
@@ -496,6 +544,52 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
                           className="rounded-xl bg-red-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 hover:bg-red-600"
                         >
                           {checkingVehicleId === v.id ? '처리중' : '검사 완료'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* 보험 만료일 정보 */}
+          {selectedInsuranceVehicles.length > 0 && (
+            <div className="mb-3 flex flex-col gap-2">
+              {selectedInsuranceVehicles.map((v) => {
+                const isDone = v.is_insured;
+                return (
+                  <div key={v.id} className={cn(
+                    'flex items-center justify-between rounded-2xl border px-4 py-3',
+                    isDone ? 'border-neutral-200 bg-neutral-50' : 'border-yellow-300 bg-yellow-50',
+                  )}>
+                    <div>
+                      <p className={cn('text-sm font-semibold', isDone ? 'text-neutral-400' : 'text-yellow-800')}>
+                        🛡 {v.name} ({v.plate_number})
+                      </p>
+                      <p className={cn('text-xs mt-0.5', isDone ? 'text-neutral-400' : 'text-yellow-700')}>
+                        {isDone ? '✓ 보험 완료' : '보험 만료일입니다'}
+                      </p>
+                      {v.insurance_memo && (
+                        <p className="text-xs mt-0.5 text-neutral-400">{v.insurance_memo}</p>
+                      )}
+                    </div>
+                    <div className="ml-3 flex shrink-0 gap-1.5">
+                      {isDone ? (
+                        <button
+                          onClick={() => void handleInsuranceUndo(v)}
+                          disabled={checkingInsuranceId === v.id}
+                          className="rounded-xl border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-500 disabled:opacity-50 hover:bg-neutral-50"
+                        >
+                          {checkingInsuranceId === v.id ? '처리중' : '완료 취소'}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => void handleInsuranceDone(v)}
+                          disabled={checkingInsuranceId === v.id}
+                          className="rounded-xl bg-yellow-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 hover:bg-yellow-600"
+                        >
+                          {checkingInsuranceId === v.id ? '처리중' : '보험 완료'}
                         </button>
                       )}
                     </div>

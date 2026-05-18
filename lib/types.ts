@@ -172,6 +172,7 @@ export type Vehicle = {
   inspected_at: string | null;
   insurance_date: string | null;
   insurance_recipient_phone: string | null;
+  insurance_memo: string | null;
   is_insured: boolean;
   insured_at: string | null;
   created_at: string;
