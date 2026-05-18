@@ -170,6 +170,10 @@ export type Vehicle = {
   inspection_cycle: number;
   is_inspected: boolean;
   inspected_at: string | null;
+  insurance_date: string | null;
+  insurance_recipient_phone: string | null;
+  is_insured: boolean;
+  insured_at: string | null;
   created_at: string;
   updated_at: string;
 };

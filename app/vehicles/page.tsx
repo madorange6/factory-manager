@@ -14,6 +14,8 @@ type Draft = {
   inspection_date: string;
   recipient_phone: string;
   inspection_cycle: number;
+  insurance_date: string;
+  insurance_recipient_phone: string;
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -22,6 +24,8 @@ const EMPTY_DRAFT: Draft = {
   inspection_date: '',
   recipient_phone: '',
   inspection_cycle: 12,
+  insurance_date: '',
+  insurance_recipient_phone: '',
 };
 
 function cn(...cls: Array<string | false | null | undefined>) {
@@ -72,6 +76,8 @@ export default function VehiclesPage() {
       inspection_date: draft.inspection_date,
       recipient_phone: draft.recipient_phone.trim(),
       inspection_cycle: draft.inspection_cycle,
+      insurance_date: draft.insurance_date || null,
+      insurance_recipient_phone: draft.insurance_recipient_phone.trim() || null,
     });
     setSaving(false);
     if (error) { setErrorText(getErrorMessage(error)); return; }
@@ -89,11 +95,23 @@ export default function VehiclesPage() {
       inspection_date: editDraft.inspection_date,
       recipient_phone: editDraft.recipient_phone.trim(),
       inspection_cycle: editDraft.inspection_cycle,
+      insurance_date: editDraft.insurance_date || null,
+      insurance_recipient_phone: editDraft.insurance_recipient_phone.trim() || null,
       updated_at: new Date().toISOString(),
     }).eq('id', editId);
     setSaving(false);
     if (error) { setErrorText(getErrorMessage(error)); return; }
     setEditId(null);
+    await fetchVehicles();
+  }
+
+  async function handleInsuranceDone(id: string) {
+    const { error } = await supabase.from('vehicles').update({
+      is_insured: true,
+      insured_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', id);
+    if (error) { setErrorText(getErrorMessage(error)); return; }
     await fetchVehicles();
   }
 
@@ -175,7 +193,7 @@ export default function VehiclesPage() {
                       <input
                         value={editDraft.recipient_phone}
                         onChange={(e) => setEditDraft((p) => ({ ...p, recipient_phone: e.target.value }))}
-                        placeholder="담당자 번호 (010-XXXX-XXXX)"
+                        placeholder="검사 담당자 번호 (010-XXXX-XXXX)"
                         className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
                       />
                       <div>
@@ -195,6 +213,26 @@ export default function VehiclesPage() {
                               {cycle}개월
                             </button>
                           ))}
+                        </div>
+                      </div>
+                      <div className="mt-1 border-t border-neutral-100 pt-3">
+                        <p className="mb-2 text-xs font-semibold text-neutral-500">보험 정보</p>
+                        <div className="flex flex-col gap-2">
+                          <div>
+                            <p className="mb-1 text-xs text-neutral-500">보험 만료일</p>
+                            <input
+                              type="date"
+                              value={editDraft.insurance_date}
+                              onChange={(e) => setEditDraft((p) => ({ ...p, insurance_date: e.target.value }))}
+                              className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                            />
+                          </div>
+                          <input
+                            value={editDraft.insurance_recipient_phone}
+                            onChange={(e) => setEditDraft((p) => ({ ...p, insurance_recipient_phone: e.target.value }))}
+                            placeholder="보험 담당자 번호 (010-XXXX-XXXX)"
+                            className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                          />
                         </div>
                       </div>
                       <div className="flex gap-2 pt-1">
@@ -217,7 +255,7 @@ export default function VehiclesPage() {
                 ) : (
                   <div key={v.id} className="rounded-3xl border border-neutral-200 bg-white p-4 shadow-sm">
                     <div className="flex items-start justify-between">
-                      <div>
+                      <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="text-base font-bold">{v.name}</p>
                           <span className="text-xs text-neutral-400">{v.plate_number}</span>
@@ -233,11 +271,42 @@ export default function VehiclesPage() {
                         {v.is_inspected && (
                           <p className="mt-0.5 text-xs text-emerald-600 font-medium">✓ 검사 완료</p>
                         )}
-                        <p className="mt-0.5 text-xs text-neutral-400">담당: {v.recipient_phone} / 주기: {v.inspection_cycle}개월</p>
+                        <p className="mt-0.5 text-xs text-neutral-400">검사 담당: {v.recipient_phone} / 주기: {v.inspection_cycle}개월</p>
+                        {v.insurance_date && (() => {
+                          const insdays = daysUntil(v.insurance_date);
+                          const insOverdue = insdays < 0;
+                          const insSoon = insdays >= 0 && insdays <= 7;
+                          return (
+                            <div className="mt-1.5 border-t border-neutral-100 pt-1.5">
+                              <p className="text-xs text-neutral-500">
+                                보험 만료일: <span className={cn('font-semibold', v.is_insured ? 'text-neutral-700' : insOverdue ? 'text-red-600' : insSoon ? 'text-orange-500' : 'text-neutral-700')}>{v.insurance_date}</span>
+                                {!v.is_insured && (
+                                  <span className={cn('ml-2', insOverdue ? 'text-red-500' : insSoon ? 'text-orange-400' : 'text-neutral-400')}>
+                                    {insOverdue ? `D+${Math.abs(insdays)}` : `D-${insdays}`}
+                                  </span>
+                                )}
+                              </p>
+                              {v.is_insured
+                                ? <p className="mt-0.5 text-xs text-emerald-600 font-medium">✓ 보험 완료</p>
+                                : (
+                                  <button
+                                    onClick={() => void handleInsuranceDone(v.id)}
+                                    className="mt-1 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
+                                  >
+                                    보험 완료 처리
+                                  </button>
+                                )
+                              }
+                              {v.insurance_recipient_phone && (
+                                <p className="mt-0.5 text-xs text-neutral-400">보험 담당: {v.insurance_recipient_phone}</p>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
-                      <div className="flex gap-1.5 shrink-0">
+                      <div className="flex gap-1.5 shrink-0 ml-2">
                         <button
-                          onClick={() => { setEditId(v.id); setEditDraft({ name: v.name, plate_number: v.plate_number, inspection_date: v.inspection_date, recipient_phone: v.recipient_phone, inspection_cycle: v.inspection_cycle }); }}
+                          onClick={() => { setEditId(v.id); setEditDraft({ name: v.name, plate_number: v.plate_number, inspection_date: v.inspection_date, recipient_phone: v.recipient_phone, inspection_cycle: v.inspection_cycle, insurance_date: v.insurance_date ?? '', insurance_recipient_phone: v.insurance_recipient_phone ?? '' }); }}
                           className="rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50"
                         >
                           수정
@@ -290,7 +359,7 @@ export default function VehiclesPage() {
               <input
                 value={draft.recipient_phone}
                 onChange={(e) => setDraft((p) => ({ ...p, recipient_phone: e.target.value }))}
-                placeholder="담당자 번호 (010-XXXX-XXXX)"
+                placeholder="검사 담당자 번호 (010-XXXX-XXXX)"
                 className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
               />
               <div>
@@ -310,6 +379,26 @@ export default function VehiclesPage() {
                       {cycle}개월
                     </button>
                   ))}
+                </div>
+              </div>
+              <div className="mt-1 border-t border-neutral-100 pt-3">
+                <p className="mb-2 text-xs font-semibold text-neutral-500">보험 정보 (선택)</p>
+                <div className="flex flex-col gap-2">
+                  <div>
+                    <p className="mb-1 text-xs text-neutral-500">보험 만료일</p>
+                    <input
+                      type="date"
+                      value={draft.insurance_date}
+                      onChange={(e) => setDraft((p) => ({ ...p, insurance_date: e.target.value }))}
+                      className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                    />
+                  </div>
+                  <input
+                    value={draft.insurance_recipient_phone}
+                    onChange={(e) => setDraft((p) => ({ ...p, insurance_recipient_phone: e.target.value }))}
+                    placeholder="보험 담당자 번호 (010-XXXX-XXXX)"
+                    className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
+                  />
                 </div>
               </div>
               <button

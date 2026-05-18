@@ -3,6 +3,14 @@
     {
       "path": "/api/cron/vehicle-inspection",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/vehicle-insurance",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/vehicle-insurance",
+      "schedule": "0 6 * * *"
     }
   ]
 }
