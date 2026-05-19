@@ -93,17 +93,10 @@ export default function QuickPanel({
     return [];
   }, [quickPanel.productionType, inventory]);
 
-  // 거래처명 prefix로 품목 필터링 (item 4)
   const categoryItems = useMemo(() => {
     if (!quickPanel.category) return [];
-    const byCategory = inventory.filter((item) => normalizeCategory(item.category) === quickPanel.category);
-    const prefix = quickPanel.companyName.trim();
-    if (prefix) {
-      const filtered = byCategory.filter((item) => item.name.startsWith(prefix + ' '));
-      return filtered.length > 0 ? filtered : byCategory;
-    }
-    return byCategory;
-  }, [quickPanel.category, quickPanel.companyName, inventory]);
+    return inventory.filter((item) => normalizeCategory(item.category) === quickPanel.category);
+  }, [quickPanel.category, inventory]);
 
   const existingProductionTargetItem = useMemo(() => {
     const raw = quickPanel.targetItemName.trim();
