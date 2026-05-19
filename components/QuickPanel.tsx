@@ -808,9 +808,13 @@ export default function QuickPanel({
                   const byCategory = itemEffectiveCat ? inventory.filter((item) => normalizeCategory(item.category) === itemEffectiveCat) : [];
                   const prefix = quickPanel.companyName.trim();
                   const itemOptions = prefix
-                    ? (byCategory.filter((i) => i.name.startsWith(prefix + ' ')).length > 0
-                      ? byCategory.filter((i) => i.name.startsWith(prefix + ' '))
-                      : byCategory)
+                    ? [...byCategory].sort((a, b) => {
+                        const aMatch = a.name.startsWith(prefix + ' ');
+                        const bMatch = b.name.startsWith(prefix + ' ');
+                        if (aMatch && !bMatch) return -1;
+                        if (!aMatch && bMatch) return 1;
+                        return 0;
+                      })
                     : byCategory;
                   return (
                     <div key={index} className="mb-3 rounded-2xl border border-neutral-100 bg-neutral-50 p-3 space-y-2">
