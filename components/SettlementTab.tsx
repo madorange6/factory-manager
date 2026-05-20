@@ -173,6 +173,8 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
   const lastStarTapRef = useRef<{ name: string; time: number } | null>(null);
   const [showMonthlyOnly, setShowMonthlyOnly] = useState(false);
   const [dnModal, setDnModal] = useState<DnModal>({ ...EMPTY_DN_MODAL });
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<number>>(new Set());
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
 
   useEffect(() => { void fetchInvoices(); }, []);
 
@@ -1214,12 +1216,6 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
                             className={cn('rounded-full border w-6 h-6 flex items-center justify-center text-[10px] font-bold',
                               isMonthly ? 'border-violet-400 bg-violet-100 text-violet-700' : 'border-neutral-200 bg-white text-neutral-400')}
                           >月</button>
-                          {isMonthly && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); void openDeliveryNoteModal(companyName, coId, coFactory); }}
-                              className="rounded-full border border-violet-300 bg-violet-50 px-2 h-6 flex items-center justify-center text-[10px] font-semibold text-violet-700 hover:bg-violet-100"
-                            >납품내역서</button>
-                          )}
                         </>
                       );
                     })()}
@@ -1257,6 +1253,19 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
                           <div key={inv.id} className="rounded-2xl border border-neutral-100 bg-neutral-50 opacity-70">
                             {/* 접힌 헤더 */}
                             <div className="flex items-center justify-between gap-2 px-3 py-2">
+                              <input
+                                type="checkbox"
+                                checked={selectedInvoiceIds.has(inv.id)}
+                                onChange={(e) => {
+                                  setSelectedInvoiceIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) next.add(inv.id); else next.delete(inv.id);
+                                    return next;
+                                  });
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="shrink-0 w-4 h-4 accent-neutral-700"
+                              />
                               <button
                                 className="flex items-center gap-2 min-w-0 flex-1 text-left"
                                 onClick={() => setExpandedDoneIds((prev) => {
@@ -1332,9 +1341,23 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
                       return (
                         <div key={inv.id} className="rounded-2xl border border-neutral-200 p-3">
                           <div className="flex items-start justify-between gap-2 mb-2">
-                            <div>
-                              <p className="text-xs text-neutral-500">{inv.date}{inv.due_date ? ` → 결제예정 ${inv.due_date}` : ''}</p>
-                              {inv.note && <p className="text-xs text-blue-600">{inv.note}</p>}
+                            <div className="flex items-start gap-2 min-w-0 flex-1">
+                              <input
+                                type="checkbox"
+                                checked={selectedInvoiceIds.has(inv.id)}
+                                onChange={(e) => {
+                                  setSelectedInvoiceIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) next.add(inv.id); else next.delete(inv.id);
+                                    return next;
+                                  });
+                                }}
+                                className="mt-0.5 shrink-0 w-4 h-4 accent-neutral-700"
+                              />
+                              <div>
+                                <p className="text-xs text-neutral-500">{inv.date}{inv.due_date ? ` → 결제예정 ${inv.due_date}` : ''}</p>
+                                {inv.note && <p className="text-xs text-blue-600">{inv.note}</p>}
+                              </div>
                             </div>
                             <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold', inv.direction === 'receivable' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700')}>
                               {inv.direction === 'receivable' ? '매출' : '매입'}
@@ -1492,6 +1515,18 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* 요약 보기 플로팅 버튼 */}
+      {selectedInvoiceIds.size > 0 && (
+        <div className="fixed bottom-24 left-0 right-0 flex justify-center z-40 pointer-events-none">
+          <button
+            onClick={() => setShowSummaryModal(true)}
+            className="pointer-events-auto rounded-full bg-neutral-900 px-5 py-3 text-sm font-semibold text-white shadow-lg"
+          >
+            요약 보기 ({selectedInvoiceIds.size}건)
+          </button>
         </div>
       )}
 
@@ -1844,6 +1879,98 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
           </div>
         </div>
       )}
+
+      {/* 항목 선택 합계 요약 팝업 */}
+      {showSummaryModal && (() => {
+        const selectedInvoices = invoices.filter((inv) => selectedInvoiceIds.has(inv.id));
+        const itemMap = new Map<string, { qty: number; supply: number; tax: number }>();
+        for (const inv of selectedInvoices) {
+          for (const item of inv.items) {
+            const name = item.item_name || '-';
+            const existing = itemMap.get(name) ?? { qty: 0, supply: 0, tax: 0 };
+            itemMap.set(name, {
+              qty: existing.qty + Number(item.quantity),
+              supply: existing.supply + Number(item.supply_amount),
+              tax: existing.tax + Number(item.tax_amount),
+            });
+          }
+        }
+        const rows = Array.from(itemMap.entries()).map(([name, v]) => ({
+          name,
+          qty: v.qty,
+          unitPrice: v.qty > 0 ? Math.round(v.supply / v.qty) : 0,
+          supply: v.supply,
+          tax: v.tax,
+          total: v.supply + v.tax,
+        }));
+        const totalSupply = rows.reduce((s, r) => s + r.supply, 0);
+        const totalTax = rows.reduce((s, r) => s + r.tax, 0);
+        const grandTotal = totalSupply + totalTax;
+
+        function handleCopy() {
+          const header = ['품목', '수량', '단가', '공급가액', '세액', '총액'].join('\t');
+          const body = rows.map((r) => [r.name, r.qty, r.unitPrice, r.supply, r.tax, r.total].join('\t')).join('\n');
+          const footer = ['합계', '', '', totalSupply, totalTax, grandTotal].join('\t');
+          void navigator.clipboard.writeText([header, body, footer].join('\n'));
+        }
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={() => setShowSummaryModal(false)}>
+            <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold">선택 항목 합계 ({selectedInvoiceIds.size}건)</h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleCopy}
+                    className="rounded-full border border-neutral-300 bg-neutral-50 px-3 h-7 flex items-center justify-center text-xs font-semibold text-neutral-700 hover:bg-neutral-100"
+                  >복사</button>
+                  <button onClick={() => setShowSummaryModal(false)} className="text-neutral-400 text-lg leading-none">✕</button>
+                </div>
+              </div>
+              {rows.length === 0 ? (
+                <p className="text-sm text-neutral-400 text-center py-4">선택된 항목에 품목이 없습니다.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-neutral-400 border-b border-neutral-200">
+                        <th className="text-left py-2 pr-2 font-medium">품목</th>
+                        <th className="text-right py-2 px-1 font-medium">수량</th>
+                        <th className="text-right py-2 px-1 font-medium">단가</th>
+                        <th className="text-right py-2 px-1 font-medium">공급가액</th>
+                        <th className="text-right py-2 px-1 font-medium">세액</th>
+                        <th className="text-right py-2 pl-1 font-medium">총액</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r) => (
+                        <tr key={r.name} className="border-t border-neutral-100">
+                          <td className="py-1.5 pr-2 text-neutral-700">{r.name}</td>
+                          <td className="py-1.5 px-1 text-right text-neutral-700">{r.qty.toLocaleString()}</td>
+                          <td className="py-1.5 px-1 text-right text-neutral-700">{formatCurrency(r.unitPrice)}</td>
+                          <td className="py-1.5 px-1 text-right text-neutral-700">{formatCurrency(r.supply)}</td>
+                          <td className="py-1.5 px-1 text-right text-neutral-700">{formatCurrency(r.tax)}</td>
+                          <td className="py-1.5 pl-1 text-right font-semibold text-neutral-800">{formatCurrency(r.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-neutral-300 font-bold">
+                        <td className="py-2 pr-2 text-neutral-700">합계</td>
+                        <td className="py-2 px-1" />
+                        <td className="py-2 px-1" />
+                        <td className="py-2 px-1 text-right text-neutral-800">{formatCurrency(totalSupply)}</td>
+                        <td className="py-2 px-1 text-right text-neutral-800">{formatCurrency(totalTax)}</td>
+                        <td className="py-2 pl-1 text-right text-neutral-900">{formatCurrency(grandTotal)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* C안: 거래처 목록 추가 제안 모달 */}
       {pendingCompanyName && (
