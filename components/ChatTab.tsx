@@ -69,6 +69,7 @@ export default function ChatTab({
   const [replyTo, setReplyTo] = useState<MessageRow | null>(null);
   const [dollarTrigger, setDollarTrigger] = useState<DollarTrigger>(null);
   const [search, setSearch] = useState<SearchState>({ open: false, query: '', resultIndices: [], currentIdx: 0 });
+  const [showImportantOnly, setShowImportantOnly] = useState(false);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -181,10 +182,13 @@ export default function ChatTab({
   }
 
   const threads = buildThreads(messages);
+  const displayedThreads = showImportantOnly
+    ? threads.filter((t) => !!t.root.is_important || t.replies.some((r) => !!r.is_important))
+    : threads;
 
   function handleSearchChange(q: string) {
     const indices: number[] = [];
-    threads.forEach((thread, idx) => {
+    displayedThreads.forEach((thread, idx) => {
       const texts = [thread.root, ...thread.replies].map((m) => m.content.toLowerCase());
       if (q.trim() && texts.some((t) => t.includes(q.toLowerCase()))) indices.push(idx);
     });
@@ -300,7 +304,7 @@ export default function ChatTab({
         </div>
 
         <div className="space-y-3">
-          {threads.map((thread, threadIdx) => {
+          {displayedThreads.map((thread, threadIdx) => {
             const { root, replies } = thread;
             const isUser = root.message_type === 'chat' || root.message_type === 'command';
             const isCommand = root.message_type === 'command';
@@ -360,7 +364,7 @@ export default function ChatTab({
 
                     {/* 댓글 */}
                     {replies.length > 0 && (
-                      <div className={cn('mt-2 space-y-2 border-t pt-2', isUser ? 'border-white/20' : 'border-neutral-100')}>
+                      <div className={cn('mt-2 space-y-2 border-t pt-2', isUser && !isQuickInput ? 'border-white/20' : 'border-neutral-100')}>
                         {replies.map((reply) => (
                           <div
                             key={reply.id}
@@ -377,7 +381,7 @@ export default function ChatTab({
                               ↩ {reply.user_name || reply.user_email || ''}
                               {!!reply.is_important && ' ⭐'}
                             </p>
-                            <p className={cn('break-words whitespace-pre-wrap text-sm', isUser ? 'text-neutral-100' : 'text-neutral-700')}>
+                            <p className={cn('break-words whitespace-pre-wrap text-sm', isUser && !isQuickInput ? 'text-neutral-100' : 'text-neutral-700')}>
                               {search.open && search.query.trim() ? highlightText(reply.content, search.query) : reply.content}
                             </p>
                             <p className={cn('mt-0.5 text-[10px]', isUser ? 'text-neutral-500' : 'text-neutral-400')}>
@@ -441,21 +445,29 @@ export default function ChatTab({
         )}
 
         <div className="rounded-3xl border border-neutral-200 bg-white p-2 shadow-lg">
-          <div className="flex items-end gap-2">
+          <div className="flex items-end gap-1.5">
             <button
               onClick={() => setSearch((p) => p.open ? { open: false, query: '', resultIndices: [], currentIdx: 0 } : { ...p, open: true })}
               type="button"
-              className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border text-lg', search.open ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50')}
+              className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border text-base', search.open ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-neutral-50')}
               aria-label="검색"
             >
               🔍
             </button>
-            <label className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-50 text-lg">
+            <label className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-50 text-base">
               <span>📷</span>
               <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleImageUpload(f); e.target.value = ''; }} />
             </label>
-            <button onClick={onOpenQuickPanel} type="button" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-50 text-lg" aria-label="빠른입력 열기">
+            <button onClick={onOpenQuickPanel} type="button" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-neutral-200 bg-neutral-50 text-base" aria-label="빠른입력 열기">
               ⚡
+            </button>
+            <button
+              onClick={() => { setShowImportantOnly((p) => !p); setSearch({ open: false, query: '', resultIndices: [], currentIdx: 0 }); }}
+              type="button"
+              className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border text-base', showImportantOnly ? 'border-yellow-400 bg-yellow-50 text-yellow-500' : 'border-neutral-200 bg-neutral-50 text-neutral-400')}
+              aria-label="중요 모아보기"
+            >
+              ★
             </button>
             <textarea
               ref={inputRef}
@@ -470,8 +482,8 @@ export default function ChatTab({
               className="max-h-32 min-h-[44px] flex-1 resize-none rounded-2xl border-0 bg-transparent px-3 py-2 text-sm outline-none placeholder:text-neutral-400"
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void handleSend(); } }}
             />
-            <button onClick={() => void handleSend()} disabled={sending} className="rounded-2xl bg-neutral-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">
-              {sending ? '처리중' : '전송'}
+            <button onClick={() => void handleSend()} disabled={sending} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-neutral-900 text-xs font-semibold text-white disabled:opacity-50">
+              {sending ? '…' : '전송'}
             </button>
           </div>
         </div>
