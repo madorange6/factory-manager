@@ -1204,9 +1204,10 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
                       <span className="text-sm font-bold text-neutral-700">{formatCurrency(pendingAmount)}원</span>
                     )}
                     {(() => {
-                      const co = companies.find((c) => c.id === groupInvoices[0]?.company_id);
+                      const co = companies.find((c) => c.id === groupInvoices[0]?.company_id)
+                        ?? companies.find((c) => c.name === companyName);
                       const isMonthly = co?.is_monthly_settlement ?? false;
-                      const coId = groupInvoices[0]?.company_id ?? null;
+                      const coId = co?.id ?? groupInvoices[0]?.company_id ?? null;
                       const coFactory = groupInvoices[0]?.factory ?? '';
                       return (
                         <>
@@ -1521,12 +1522,20 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
       {/* 요약 보기 플로팅 버튼 */}
       {selectedInvoiceIds.size > 0 && (
         <div className="fixed bottom-24 left-0 right-0 flex justify-center z-40 pointer-events-none">
-          <button
-            onClick={() => setShowSummaryModal(true)}
-            className="pointer-events-auto rounded-full bg-neutral-900 px-5 py-3 text-sm font-semibold text-white shadow-lg"
-          >
-            요약 보기 ({selectedInvoiceIds.size}건)
-          </button>
+          <div className="pointer-events-auto flex items-center gap-2">
+            <button
+              onClick={() => setShowSummaryModal(true)}
+              className="rounded-full bg-neutral-900 px-5 py-3 text-sm font-semibold text-white shadow-lg"
+            >
+              요약 보기 ({selectedInvoiceIds.size}건)
+            </button>
+            <button
+              onClick={() => setSelectedInvoiceIds(new Set())}
+              className="rounded-full border border-neutral-300 bg-white px-4 py-3 text-sm font-semibold text-neutral-600 shadow-lg"
+            >
+              취소
+            </button>
+          </div>
         </div>
       )}
 
