@@ -13,12 +13,8 @@
       "schedule": "0 6 * * *"
     },
     {
-      "path": "/api/notify/tax-loan?type=morning",
-      "schedule": "0 0 * * *"
-    },
-    {
-      "path": "/api/notify/tax-loan?type=evening",
-      "schedule": "0 12 * * *"
+      "path": "/api/notify/all",
+      "schedule": "0 * * * *"
     }
   ]
 }

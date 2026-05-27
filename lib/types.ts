@@ -253,6 +253,32 @@ export type LoanSchedule = {
   created_at: string;
 };
 
+export type VehicleInsurance = {
+  id: number;
+  vehicle_id: string;
+  insurance_name: string;
+  insurance_company?: string | null;
+  expiry_date: string;
+  premium?: number | null;
+  memo?: string | null;
+  is_active: boolean;
+  created_at: string;
+};
+
+export type ChatNotification = {
+  id: number;
+  chat_id: number;
+  notification_type: 'dday' | 'repeat';
+  target_date?: string | null;
+  alert_days?: number[] | null;
+  repeat_type?: 'daily' | 'weekly' | 'monthly' | null;
+  repeat_time: string;
+  repeat_day_of_week?: number | null;
+  repeat_day_of_month?: number | null;
+  is_active: boolean;
+  created_at: string;
+};
+
 export type QuickPanelState = {
   isOpen: boolean;
   date: string;

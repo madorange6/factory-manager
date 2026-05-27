@@ -37,6 +37,34 @@ type Props = {
 type ContextMenu = { message: MessageRow } | null;
 type Thread = { root: MessageRow; replies: MessageRow[] };
 
+type NotifModal = {
+  open: boolean;
+  messageId: number | null;
+  tab: 'dday' | 'repeat';
+  targetDate: string;
+  alertDays: number[];
+  repeatType: 'daily' | 'weekly' | 'monthly';
+  repeatTime: string;
+  repeatDayOfWeek: number;
+  repeatDayOfMonth: number;
+  saving: boolean;
+  existingId: number | null;
+};
+
+const EMPTY_NOTIF: NotifModal = {
+  open: false,
+  messageId: null,
+  tab: 'dday',
+  targetDate: '',
+  alertDays: [7, 1, 0],
+  repeatType: 'daily',
+  repeatTime: '09:00',
+  repeatDayOfWeek: 1,
+  repeatDayOfMonth: 1,
+  saving: false,
+  existingId: null,
+};
+
 function buildThreads(messages: MessageRow[]): Thread[] {
   const replyMap = new Map<number, MessageRow[]>();
   messages.forEach((m) => {
@@ -70,6 +98,8 @@ export default function ChatTab({
   const [dollarTrigger, setDollarTrigger] = useState<DollarTrigger>(null);
   const [search, setSearch] = useState<SearchState>({ open: false, query: '', resultIndices: [], currentIdx: 0 });
   const [showImportantOnly, setShowImportantOnly] = useState(false);
+  const [notifModal, setNotifModal] = useState<NotifModal>(EMPTY_NOTIF);
+  const [notifMessageIds, setNotifMessageIds] = useState<Set<number>>(new Set());
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -80,6 +110,12 @@ export default function ChatTab({
   }
 
   useEffect(() => { scrollToBottom(); }, [messages.length]);
+
+  useEffect(() => {
+    supabase.from('chat_notifications').select('chat_id').eq('is_active', true).then(({ data }) => {
+      if (data) setNotifMessageIds(new Set(data.map((r: { chat_id: number }) => r.chat_id)));
+    });
+  }, []);
 
   function createTempMessage(content: string, messageType: MessageRow['message_type'], parentId?: number | null): MessageRow {
     return {
@@ -159,11 +195,11 @@ export default function ChatTab({
   }
 
   async function handleClearMessages() {
-    if (!window.confirm('채팅 기록을 모두 삭제할까요?')) return;
+    if (!window.confirm('채팅 기록을 모두 삭제할까요?\n(중요 표시 메시지는 삭제되지 않습니다)')) return;
     try {
-      const { error } = await supabase.from('messages').delete().neq('id', 0);
+      const { error } = await supabase.from('messages').delete().neq('id', 0).eq('is_important', false);
       if (error) throw error;
-      setMessages([]);
+      setMessages((prev) => prev.filter((m) => !!m.is_important));
     } catch (error) {
       setErrorText(getErrorMessage(error));
     }
@@ -262,6 +298,10 @@ export default function ChatTab({
   }
 
   async function handleDeleteMessage(message: MessageRow) {
+    if (message.is_important) {
+      alert('중요 표시된 메시지는 삭제할 수 없어.\n중요 해제 후 삭제해줘.');
+      return;
+    }
     if (!window.confirm('이 메시지를 삭제할까요?')) return;
     const { error } = await supabase.from('messages').delete().eq('id', message.id);
     if (!error) {
@@ -274,6 +314,71 @@ export default function ChatTab({
     setReplyTo(message);
     setContextMenu(null);
     setTimeout(() => inputRef.current?.focus(), 100);
+  }
+
+  async function handleOpenNotif(message: MessageRow) {
+    setContextMenu(null);
+    const { data } = await supabase
+      .from('chat_notifications')
+      .select('*')
+      .eq('chat_id', message.id)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (data) {
+      setNotifModal({
+        open: true,
+        messageId: message.id,
+        tab: data.notification_type as 'dday' | 'repeat',
+        targetDate: data.target_date ?? '',
+        alertDays: data.alert_days ?? [7, 1, 0],
+        repeatType: (data.repeat_type as 'daily' | 'weekly' | 'monthly') ?? 'daily',
+        repeatTime: data.repeat_time?.substring(0, 5) ?? '09:00',
+        repeatDayOfWeek: data.repeat_day_of_week ?? 1,
+        repeatDayOfMonth: data.repeat_day_of_month ?? 1,
+        saving: false,
+        existingId: data.id,
+      });
+    } else {
+      setNotifModal({ ...EMPTY_NOTIF, open: true, messageId: message.id });
+    }
+  }
+
+  async function handleSaveNotif() {
+    if (!notifModal.messageId) return;
+    setNotifModal((p) => ({ ...p, saving: true }));
+    try {
+      if (notifModal.existingId) {
+        await supabase.from('chat_notifications').update({ is_active: false }).eq('id', notifModal.existingId);
+      }
+      const payload = notifModal.tab === 'dday'
+        ? {
+            chat_id: notifModal.messageId,
+            notification_type: 'dday' as const,
+            target_date: notifModal.targetDate,
+            alert_days: notifModal.alertDays,
+            repeat_time: '09:00:00',
+          }
+        : {
+            chat_id: notifModal.messageId,
+            notification_type: 'repeat' as const,
+            repeat_type: notifModal.repeatType,
+            repeat_time: notifModal.repeatTime + ':00',
+            repeat_day_of_week: notifModal.repeatType === 'weekly' ? notifModal.repeatDayOfWeek : null,
+            repeat_day_of_month: notifModal.repeatType === 'monthly' ? notifModal.repeatDayOfMonth : null,
+          };
+      await supabase.from('chat_notifications').insert(payload);
+      setNotifMessageIds((prev) => new Set([...prev, notifModal.messageId!]));
+      setNotifModal(EMPTY_NOTIF);
+    } catch {
+      setNotifModal((p) => ({ ...p, saving: false }));
+    }
+  }
+
+  async function handleDisableNotif() {
+    if (!notifModal.existingId) return;
+    await supabase.from('chat_notifications').update({ is_active: false }).eq('id', notifModal.existingId);
+    setNotifMessageIds((prev) => { const s = new Set(prev); s.delete(notifModal.messageId!); return s; });
+    setNotifModal(EMPTY_NOTIF);
   }
 
   function startLongPress(message: MessageRow) {
@@ -345,6 +450,7 @@ export default function ChatTab({
                           {!isUser ? 'system' : isCommand ? 'command' : 'chat'}
                         </p>
                         {isImportant && <span className="text-sm leading-none">⭐</span>}
+                        {notifMessageIds.has(root.id) && <span className="text-sm leading-none">🔔</span>}
                       </div>
                       {(root.user_name || root.user_email) && (
                         <p className={cn('truncate text-[11px]', isUser ? 'text-neutral-300' : 'text-neutral-500')}>
@@ -576,6 +682,13 @@ export default function ChatTab({
                   ↩ 댓글 달기
                 </button>
               )}
+              {!contextMenu.message.parent_id && (
+                <button
+                  onClick={() => void handleOpenNotif(contextMenu.message)}
+                  className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-semibold text-neutral-700">
+                  🔔 알림 설정
+                </button>
+              )}
               <button
                 onClick={() => void handleDeleteMessage(contextMenu.message)}
                 className="w-full rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600">
@@ -586,6 +699,138 @@ export default function ChatTab({
                 className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm font-medium text-neutral-500">
                 취소
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 알림 설정 모달 */}
+      {notifModal.open && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setNotifModal(EMPTY_NOTIF)}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-10 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-base font-bold">🔔 알림 설정</p>
+              <button onClick={() => setNotifModal(EMPTY_NOTIF)} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
+            </div>
+
+            {/* 탭 */}
+            <div className="mb-4 flex gap-2">
+              {(['dday', 'repeat'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setNotifModal((p) => ({ ...p, tab: t }))}
+                  className={cn(
+                    'flex-1 rounded-xl py-2 text-sm font-semibold',
+                    notifModal.tab === t ? 'bg-neutral-900 text-white' : 'border border-neutral-200 text-neutral-500'
+                  )}
+                >
+                  {t === 'dday' ? 'D-day 알림' : '반복 알림'}
+                </button>
+              ))}
+            </div>
+
+            {notifModal.tab === 'dday' ? (
+              <div className="space-y-3">
+                <div>
+                  <p className="mb-1 text-xs text-neutral-500">기준 날짜</p>
+                  <input
+                    type="date"
+                    value={notifModal.targetDate}
+                    onChange={(e) => setNotifModal((p) => ({ ...p, targetDate: e.target.value }))}
+                    className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                  />
+                </div>
+                <div>
+                  <p className="mb-2 text-xs text-neutral-500">알림 시점 (복수 선택)</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {[7, 3, 1, 0].map((d) => (
+                      <label key={d} className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={notifModal.alertDays.includes(d)}
+                          onChange={(e) => setNotifModal((p) => ({
+                            ...p,
+                            alertDays: e.target.checked
+                              ? [...p.alertDays, d]
+                              : p.alertDays.filter((x) => x !== d),
+                          }))}
+                          className="rounded"
+                        />
+                        <span className="text-sm">{d === 0 ? '당일' : `D-${d}`}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <p className="mb-2 text-xs text-neutral-500">반복 주기</p>
+                  <div className="space-y-1.5">
+                    {(['daily', 'weekly', 'monthly'] as const).map((type) => (
+                      <label key={type} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          checked={notifModal.repeatType === type}
+                          onChange={() => setNotifModal((p) => ({ ...p, repeatType: type }))}
+                        />
+                        <span className="text-sm">
+                          {type === 'daily' ? '매일' : type === 'weekly' ? '매주' : '매월'}
+                        </span>
+                        {type === 'weekly' && notifModal.repeatType === 'weekly' && (
+                          <div className="flex gap-1 ml-1">
+                            {['일', '월', '화', '수', '목', '금', '토'].map((d, i) => (
+                              <button
+                                key={i}
+                                onClick={() => setNotifModal((p) => ({ ...p, repeatDayOfWeek: i }))}
+                                className={cn('w-7 h-7 rounded-full text-xs font-semibold', notifModal.repeatDayOfWeek === i ? 'bg-neutral-900 text-white' : 'border border-neutral-200 text-neutral-600')}
+                              >
+                                {d}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {type === 'monthly' && notifModal.repeatType === 'monthly' && (
+                          <input
+                            type="number"
+                            min={1}
+                            max={31}
+                            value={notifModal.repeatDayOfMonth}
+                            onChange={(e) => setNotifModal((p) => ({ ...p, repeatDayOfMonth: Number(e.target.value) }))}
+                            className="ml-1 w-16 rounded-lg border border-neutral-200 px-2 py-1 text-sm outline-none"
+                          />
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="mb-1 text-xs text-neutral-500">알림 시간 (KST)</p>
+                  <input
+                    type="time"
+                    value={notifModal.repeatTime}
+                    onChange={(e) => setNotifModal((p) => ({ ...p, repeatTime: e.target.value }))}
+                    className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="mt-4 space-y-2">
+              <button
+                onClick={() => void handleSaveNotif()}
+                disabled={notifModal.saving}
+                className="w-full rounded-2xl bg-neutral-900 py-3 text-sm font-semibold text-white disabled:opacity-40"
+              >
+                {notifModal.saving ? '저장중' : '저장'}
+              </button>
+              {notifModal.existingId && (
+                <button
+                  onClick={() => void handleDisableNotif()}
+                  className="w-full rounded-2xl border border-neutral-200 py-3 text-sm font-medium text-neutral-500"
+                >
+                  알림 끄기
+                </button>
+              )}
             </div>
           </div>
         </div>
