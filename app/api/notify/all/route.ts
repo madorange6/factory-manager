@@ -12,6 +12,8 @@ export async function GET(request: Request) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
 
+  await sendTelegramMessage('꼼꼼이 테스트 메시지입니다');
+
   const now = new Date();
   const today = now.toISOString().split('T')[0];
 
