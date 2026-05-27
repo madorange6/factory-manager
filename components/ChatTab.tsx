@@ -356,7 +356,7 @@ export default function ChatTab({
             notification_type: 'dday' as const,
             target_date: notifModal.targetDate,
             alert_days: notifModal.alertDays,
-            repeat_time: '09:00:00',
+            repeat_time: notifModal.repeatTime + ':00',
           }
         : {
             chat_id: notifModal.messageId,
@@ -759,6 +759,15 @@ export default function ChatTab({
                       </label>
                     ))}
                   </div>
+                </div>
+                <div>
+                  <p className="mb-1 text-xs text-neutral-500">알림 시간 (KST)</p>
+                  <input
+                    type="time"
+                    value={notifModal.repeatTime}
+                    onChange={(e) => setNotifModal((p) => ({ ...p, repeatTime: e.target.value }))}
+                    className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                  />
                 </div>
               </div>
             ) : (
