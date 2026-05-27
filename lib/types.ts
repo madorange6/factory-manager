@@ -194,6 +194,65 @@ export type InOutItem = {
   itemCategory: InventoryCategory | null;
 };
 
+export type TaxType = {
+  id: number;
+  name: string;
+  created_at: string;
+};
+
+export type TaxSchedule = {
+  id: number;
+  tax_type_id?: number | null;
+  tax_name: string;
+  due_date: string;
+  total_amount: number;
+  memo?: string | null;
+  created_at: string;
+};
+
+export type TaxPayment = {
+  id: number;
+  tax_schedule_id: number;
+  seq: number;
+  payment_date: string;
+  amount: number;
+  is_paid: boolean;
+  is_extended: boolean;
+  memo?: string | null;
+  paid_at?: string | null;
+  created_at: string;
+};
+
+export type Loan = {
+  id: number;
+  loan_name: string;
+  bank_name?: string | null;
+  principal: number;
+  interest_rate?: number | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  grace_period_months: number;
+  memo?: string | null;
+  is_active: boolean;
+  created_at: string;
+};
+
+export type LoanSchedule = {
+  id: number;
+  loan_id: number;
+  seq: number;
+  payment_date: string;
+  principal: number;
+  interest: number;
+  total_payment: number;
+  remaining_principal: number;
+  is_grace_period: boolean;
+  is_paid: boolean;
+  paid_at?: string | null;
+  memo?: string | null;
+  created_at: string;
+};
+
 export type QuickPanelState = {
   isOpen: boolean;
   date: string;

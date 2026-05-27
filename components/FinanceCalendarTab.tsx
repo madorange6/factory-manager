@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase/client';
 import { CashFlow, Invoice, InvoiceItem, Payment } from '../lib/types';
 import { cn, formatCurrency, getErrorMessage, todayString } from '../lib/utils';
+import TaxSection from './TaxSection';
+import LoanSection from './LoanSection';
 
 type InvoiceWithDetails = Invoice & { items: InvoiceItem[]; payments: Payment[] };
 type FactoryFilter = 'all' | '1공장' | '2공장';
@@ -143,6 +145,8 @@ export default function FinanceCalendarTab() {
   const [categoryListOpen, setCategoryListOpen] = useState(false);
   const [addCategoryPrompt, setAddCategoryPrompt] = useState<string | null>(null);
   const [olbaroSubmissions, setOlbaroSubmissions] = useState<OlbaroSubmission[]>([]);
+  const [taxDates, setTaxDates] = useState<Set<string>>(new Set());
+  const [loanDates, setLoanDates] = useState<Set<string>>(new Set());
 
   // ── 패치 ──
   async function fetchInvoices() {
@@ -220,6 +224,18 @@ export default function FinanceCalendarTab() {
     setOlbaroSubmissions((data ?? []) as OlbaroSubmission[]);
   }, []);
 
+  const fetchTaxLoanDates = useCallback(async (y: number, m: number) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const from = `${y}-${pad(m + 1)}-01`;
+    const to = `${y}-${pad(m + 1)}-${pad(new Date(y, m + 1, 0).getDate())}`;
+    const [{ data: taxData }, { data: loanData }] = await Promise.all([
+      supabase.from('tax_payments').select('payment_date').gte('payment_date', from).lte('payment_date', to),
+      supabase.from('loan_schedules').select('payment_date').gte('payment_date', from).lte('payment_date', to),
+    ]);
+    setTaxDates(new Set((taxData ?? []).map((r: { payment_date: string }) => r.payment_date.slice(0, 10))));
+    setLoanDates(new Set((loanData ?? []).map((r: { payment_date: string }) => r.payment_date.slice(0, 10))));
+  }, []);
+
   async function ensureRecurringCashFlows(y: number, m: number) {
     const pad = (n: number) => String(n).padStart(2, '0');
     const { data: templates } = await supabase.from('cash_flows').select('*').eq('is_recurring', true);
@@ -259,6 +275,7 @@ export default function FinanceCalendarTab() {
           fetchMonthPayments(today.getFullYear(), today.getMonth()),
           fetchCategories(),
           fetchOlbaroSubmissions(today.getFullYear(), today.getMonth()),
+          fetchTaxLoanDates(today.getFullYear(), today.getMonth()),
         ]);
       } catch (e) { setErrorText(getErrorMessage(e)); }
       finally { setLoading(false); }
@@ -271,7 +288,8 @@ export default function FinanceCalendarTab() {
     void fetchCashFlows(year, month).catch((e) => setErrorText(getErrorMessage(e)));
     void fetchMonthPayments(year, month).catch((e) => setErrorText(getErrorMessage(e)));
     void fetchOlbaroSubmissions(year, month).catch((e) => setErrorText(getErrorMessage(e)));
-  }, [year, month, fetchCashFlows, fetchMonthPayments, fetchOlbaroSubmissions]);
+    void fetchTaxLoanDates(year, month).catch((e) => setErrorText(getErrorMessage(e)));
+  }, [year, month, fetchCashFlows, fetchMonthPayments, fetchOlbaroSubmissions, fetchTaxLoanDates]);
 
   // 결제 후 invoices + monthPayments 갱신
   async function refreshAfterPayment() {
@@ -675,12 +693,14 @@ export default function FinanceCalendarTab() {
                 <span className={cn('text-sm font-medium', isSelected ? 'text-white' : dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-neutral-800')}>
                   {day}
                 </span>
-                {(hasInvoice || hasPayment || olbaroPendingDates.has(key) || olbaroDoneDates.has(key)) && (
+                {(hasInvoice || hasPayment || olbaroPendingDates.has(key) || olbaroDoneDates.has(key) || taxDates.has(key) || loanDates.has(key)) && (
                   <div className="flex gap-0.5 mt-0.5">
                     {hasInvoice && <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-blue-400')} />}
                     {hasPayment && <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-green-500')} />}
                     {olbaroPendingDates.has(key) && <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-yellow-400')} />}
                     {!olbaroPendingDates.has(key) && olbaroDoneDates.has(key) && <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-neutral-400')} />}
+                    {taxDates.has(key) && <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-red-500')} />}
+                    {loanDates.has(key) && <span className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-white' : 'bg-purple-500')} />}
                   </div>
                 )}
               </button>
@@ -702,6 +722,12 @@ export default function FinanceCalendarTab() {
         </div>
         <div className="flex items-center gap-1 text-[11px] text-neutral-400">
           <span className="h-2 w-2 rounded-full bg-neutral-400 inline-block" />올바로(전송완료)
+        </div>
+        <div className="flex items-center gap-1 text-[11px] text-neutral-400">
+          <span className="h-2 w-2 rounded-full bg-red-500 inline-block" />세금
+        </div>
+        <div className="flex items-center gap-1 text-[11px] text-neutral-400">
+          <span className="h-2 w-2 rounded-full bg-purple-500 inline-block" />대출
         </div>
       </div>
 
@@ -1399,6 +1425,10 @@ export default function FinanceCalendarTab() {
           </div>
         </div>
       )}
+
+      {/* 세금·대출 관리 */}
+      <TaxSection onDataChange={() => void fetchTaxLoanDates(year, month)} />
+      <LoanSection onDataChange={() => void fetchTaxLoanDates(year, month)} />
     </div>
   );
 }
