@@ -1,6 +1,23 @@
 import { createClient } from '@supabase/supabase-js';
 import { sendTelegramMessage } from '@/lib/telegram';
 
+type NotifRow = {
+  chat_id: number;
+  target_date: string | null;
+  alert_days: number[] | null;
+  repeat_time: string;
+  repeat_type: string | null;
+  repeat_day_of_week: number | null;
+  repeat_day_of_month: number | null;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchMessageContents(supabase: any, ids: number[]): Promise<Map<number, string>> {
+  if (ids.length === 0) return new Map();
+  const { data } = await supabase.from('messages').select('id, content').in('id', ids);
+  return new Map((data ?? []).map((m: { id: number; content: string }) => [m.id, m.content]));
+}
+
 export async function GET(request: Request) {
   const secret = request.headers.get('x-cron-secret');
   if (secret !== process.env.CRON_SECRET) {
@@ -110,14 +127,17 @@ export async function GET(request: Request) {
     }
   }
 
-  // ── 채팅 D-day 알림 (설정된 시간에 발송) ─────────────
-  const { data: ddayAlerts } = await supabase
+  // ── 채팅 D-day 알림 ───────────────────────────────────
+  const { data: ddayRaw } = await supabase
     .from('chat_notifications')
-    .select('target_date, alert_days, repeat_time, message:messages(content)')
+    .select('chat_id, target_date, alert_days, repeat_time')
     .eq('notification_type', 'dday')
     .eq('is_active', true);
 
-  for (const alert of (ddayAlerts as unknown as { target_date: string | null; alert_days: number[] | null; repeat_time: string; message: { content: string } | null }[]) ?? []) {
+  const ddayAlerts = (ddayRaw ?? []) as NotifRow[];
+  const ddayMsgMap = await fetchMessageContents(supabase, ddayAlerts.map((a) => a.chat_id));
+
+  for (const alert of ddayAlerts) {
     const alertHourKST = parseInt(alert.repeat_time?.substring(0, 2) ?? '9');
     const utcAlertHour = (alertHourKST - 9 + 24) % 24;
     if (utcAlertHour !== currentHour) continue;
@@ -128,23 +148,26 @@ export async function GET(request: Request) {
     if (alert.alert_days.includes(diffDays)) {
       const label = diffDays === 0 ? '오늘' : `D-${diffDays}`;
       await sendTelegramMessage(
-        `🔔 <b>[채팅 알림] ${label}</b>\n\n${alert.message?.content ?? '내용 없음'}\n\n기준일: ${alert.target_date}`
+        `🔔 <b>[채팅 알림] ${label}</b>\n\n${ddayMsgMap.get(alert.chat_id) ?? '내용 없음'}\n\n기준일: ${alert.target_date}`
       );
     }
   }
 
-  // ── 채팅 반복 알림 (설정된 시간에 발송) ──────────────
-  const { data: repeatAlerts } = await supabase
+  // ── 채팅 반복 알림 ────────────────────────────────────
+  const { data: repeatRaw } = await supabase
     .from('chat_notifications')
-    .select('repeat_type, repeat_time, repeat_day_of_week, repeat_day_of_month, message:messages(content)')
+    .select('chat_id, repeat_type, repeat_time, repeat_day_of_week, repeat_day_of_month')
     .eq('notification_type', 'repeat')
     .eq('is_active', true);
+
+  const repeatAlerts = (repeatRaw ?? []) as NotifRow[];
+  const repeatMsgMap = await fetchMessageContents(supabase, repeatAlerts.map((a) => a.chat_id));
 
   const todayDate = new Date(today);
   const dayOfWeek = todayDate.getDay();
   const dayOfMonth = todayDate.getDate();
 
-  for (const alert of (repeatAlerts as unknown as { repeat_type: string; repeat_time: string; repeat_day_of_week: number | null; repeat_day_of_month: number | null; message: { content: string } | null }[]) ?? []) {
+  for (const alert of repeatAlerts) {
     const alertHourKST = parseInt(alert.repeat_time?.substring(0, 2) ?? '9');
     const utcAlertHour = (alertHourKST - 9 + 24) % 24;
     if (utcAlertHour !== currentHour) continue;
@@ -159,7 +182,7 @@ export async function GET(request: Request) {
     }
 
     if (shouldSend) {
-      await sendTelegramMessage(`🔔 <b>[반복 알림]</b>\n\n${alert.message?.content ?? '내용 없음'}`);
+      await sendTelegramMessage(`🔔 <b>[반복 알림]</b>\n\n${repeatMsgMap.get(alert.chat_id) ?? '내용 없음'}`);
     }
   }
 
