@@ -58,7 +58,7 @@ const EMPTY_NOTIF: NotifModal = {
   targetDate: '',
   alertDays: [7, 1, 0],
   repeatType: 'daily',
-  repeatTime: '09:00',
+  repeatTime: '09',
   repeatDayOfWeek: 1,
   repeatDayOfMonth: 1,
   saving: false,
@@ -332,7 +332,7 @@ export default function ChatTab({
         targetDate: data.target_date ?? '',
         alertDays: data.alert_days ?? [7, 1, 0],
         repeatType: (data.repeat_type as 'daily' | 'weekly' | 'monthly') ?? 'daily',
-        repeatTime: data.repeat_time?.substring(0, 5) ?? '09:00',
+        repeatTime: data.repeat_time?.substring(0, 2) ?? '09',
         repeatDayOfWeek: data.repeat_day_of_week ?? 1,
         repeatDayOfMonth: data.repeat_day_of_month ?? 1,
         saving: false,
@@ -356,13 +356,13 @@ export default function ChatTab({
             notification_type: 'dday' as const,
             target_date: notifModal.targetDate,
             alert_days: notifModal.alertDays,
-            repeat_time: notifModal.repeatTime + ':00',
+            repeat_time: notifModal.repeatTime + ':00:00',
           }
         : {
             chat_id: notifModal.messageId,
             notification_type: 'repeat' as const,
             repeat_type: notifModal.repeatType,
-            repeat_time: notifModal.repeatTime + ':00',
+            repeat_time: notifModal.repeatTime + ':00:00',
             repeat_day_of_week: notifModal.repeatType === 'weekly' ? notifModal.repeatDayOfWeek : null,
             repeat_day_of_month: notifModal.repeatType === 'monthly' ? notifModal.repeatDayOfMonth : null,
           };
@@ -762,12 +762,15 @@ export default function ChatTab({
                 </div>
                 <div>
                   <p className="mb-1 text-xs text-neutral-500">알림 시간 (KST)</p>
-                  <input
-                    type="time"
+                  <select
                     value={notifModal.repeatTime}
                     onChange={(e) => setNotifModal((p) => ({ ...p, repeatTime: e.target.value }))}
                     className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
-                  />
+                  >
+                    {Array.from({ length: 24 }, (_, h) => (
+                      <option key={h} value={String(h).padStart(2, '0')}>{String(h).padStart(2, '0')}시</option>
+                    ))}
+                  </select>
                 </div>
               </div>
             ) : (
@@ -814,12 +817,15 @@ export default function ChatTab({
                 </div>
                 <div>
                   <p className="mb-1 text-xs text-neutral-500">알림 시간 (KST)</p>
-                  <input
-                    type="time"
+                  <select
                     value={notifModal.repeatTime}
                     onChange={(e) => setNotifModal((p) => ({ ...p, repeatTime: e.target.value }))}
                     className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
-                  />
+                  >
+                    {Array.from({ length: 24 }, (_, h) => (
+                      <option key={h} value={String(h).padStart(2, '0')}>{String(h).padStart(2, '0')}시</option>
+                    ))}
+                  </select>
                 </div>
               </div>
             )}
