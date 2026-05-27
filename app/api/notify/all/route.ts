@@ -14,11 +14,9 @@ export async function GET(request: Request) {
 
   const now = new Date();
   const today = now.toISOString().split('T')[0];
-  const currentHour = now.getUTCHours();
 
-  // ── 오전 9시 알림 (UTC 0시) ──────────────────────────
-  if (currentHour === 0) {
-    // 세금/대출 오전 알림
+  // ── 세금/대출 오전 알림 ──────────────────────────
+  {
     const morningMessages: string[] = [];
 
     const { data: taxPayments } = await supabase
@@ -94,8 +92,8 @@ export async function GET(request: Request) {
     }
   }
 
-  // ── 오후 9시 재알림 (UTC 12시) ───────────────────────
-  if (currentHour === 12) {
+  // ── 세금/대출 저녁 재알림 ───────────────────────
+  {
     const eveningMessages: string[] = [];
 
     const { data: taxPayments } = await supabase
@@ -142,9 +140,9 @@ export async function GET(request: Request) {
   const dayOfMonth = todayDate.getDate();
 
   for (const alert of (repeatAlerts as unknown as { repeat_type: string; repeat_time: string; repeat_day_of_week: number | null; repeat_day_of_month: number | null; message: { content: string } | null }[]) ?? []) {
-    const alertHourKST = parseInt(alert.repeat_time?.substring(0, 2) ?? '9');
-    const utcAlertHour = (alertHourKST - 9 + 24) % 24;
-    if (utcAlertHour !== currentHour) continue;
+    // const alertHourKST = parseInt(alert.repeat_time?.substring(0, 2) ?? '9');
+    // const utcAlertHour = (alertHourKST - 9 + 24) % 24;
+    // if (utcAlertHour !== currentHour) continue;
 
     let shouldSend = false;
     if (alert.repeat_type === 'daily') {
