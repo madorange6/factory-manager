@@ -1,7 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 import { sendTelegramMessage } from '@/lib/telegram';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const secret = request.headers.get('x-cron-secret');
+  if (secret !== process.env.CRON_SECRET) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
