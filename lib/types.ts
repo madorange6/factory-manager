@@ -175,6 +175,24 @@ export type Vehicle = {
   insurance_memo: string | null;
   is_insured: boolean;
   insured_at: string | null;
+  telegram_notify: boolean;
+  telegram_notify_days: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Insurance = {
+  id: number;
+  insurance_name: string;
+  insurance_type: '차량' | '화재';
+  vehicle_id: string | null;
+  insurance_company: string | null;
+  expiry_date: string;
+  premium: number | null;
+  recipient_phone: string | null;
+  memo: string | null;
+  notify_sms: boolean;
+  notify_telegram: boolean;
   created_at: string;
   updated_at: string;
 };

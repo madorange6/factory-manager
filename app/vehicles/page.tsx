@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase/client';
 import { Vehicle } from '../../lib/types';
 import { getErrorMessage } from '../../lib/utils';
+import InsuranceSection from '../../components/InsuranceSection';
 
 const ADMIN_EMAIL = 'sj_advisory@naver.com';
 
@@ -14,9 +15,6 @@ type Draft = {
   inspection_date: string;
   recipient_phone: string;
   inspection_cycle: number;
-  insurance_date: string;
-  insurance_recipient_phone: string;
-  insurance_memo: string;
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -25,9 +23,13 @@ const EMPTY_DRAFT: Draft = {
   inspection_date: '',
   recipient_phone: '',
   inspection_cycle: 12,
-  insurance_date: '',
-  insurance_recipient_phone: '',
-  insurance_memo: '',
+};
+
+type TelegramPopup = {
+  vehicle: Vehicle;
+  enabled: boolean;
+  days: number;
+  saving: boolean;
 };
 
 function cn(...cls: Array<string | false | null | undefined>) {
@@ -43,6 +45,7 @@ export default function VehiclesPage() {
   const [editDraft, setEditDraft] = useState<Draft>({ ...EMPTY_DRAFT });
   const [saving, setSaving] = useState(false);
   const [errorText, setErrorText] = useState('');
+  const [telegramPopup, setTelegramPopup] = useState<TelegramPopup | null>(null);
 
   useEffect(() => {
     void init();
@@ -78,9 +81,6 @@ export default function VehiclesPage() {
       inspection_date: draft.inspection_date,
       recipient_phone: draft.recipient_phone.trim(),
       inspection_cycle: draft.inspection_cycle,
-      insurance_date: draft.insurance_date || null,
-      insurance_recipient_phone: draft.insurance_recipient_phone.trim() || null,
-      insurance_memo: draft.insurance_memo.trim() || null,
     });
     setSaving(false);
     if (error) { setErrorText(getErrorMessage(error)); return; }
@@ -98,9 +98,6 @@ export default function VehiclesPage() {
       inspection_date: editDraft.inspection_date,
       recipient_phone: editDraft.recipient_phone.trim(),
       inspection_cycle: editDraft.inspection_cycle,
-      insurance_date: editDraft.insurance_date || null,
-      insurance_recipient_phone: editDraft.insurance_recipient_phone.trim() || null,
-      insurance_memo: editDraft.insurance_memo.trim() || null,
       updated_at: new Date().toISOString(),
     }).eq('id', editId);
     setSaving(false);
@@ -116,6 +113,19 @@ export default function VehiclesPage() {
       updated_at: new Date().toISOString(),
     }).eq('id', id);
     if (error) { setErrorText(getErrorMessage(error)); return; }
+    await fetchVehicles();
+  }
+
+  async function handleTelegramNotifySave() {
+    if (!telegramPopup) return;
+    setTelegramPopup((p) => p && ({ ...p, saving: true }));
+    const { error } = await supabase.from('vehicles').update({
+      telegram_notify: telegramPopup.enabled,
+      telegram_notify_days: telegramPopup.days,
+      updated_at: new Date().toISOString(),
+    }).eq('id', telegramPopup.vehicle.id);
+    if (error) { setErrorText(getErrorMessage(error)); setTelegramPopup(null); return; }
+    setTelegramPopup(null);
     await fetchVehicles();
   }
 
@@ -219,32 +229,6 @@ export default function VehiclesPage() {
                           ))}
                         </div>
                       </div>
-                      <div className="mt-1 border-t border-neutral-100 pt-3">
-                        <p className="mb-2 text-xs font-semibold text-neutral-500">보험 정보</p>
-                        <div className="flex flex-col gap-2">
-                          <div>
-                            <p className="mb-1 text-xs text-neutral-500">보험 만료일</p>
-                            <input
-                              type="date"
-                              value={editDraft.insurance_date}
-                              onChange={(e) => setEditDraft((p) => ({ ...p, insurance_date: e.target.value }))}
-                              className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
-                            />
-                          </div>
-                          <input
-                            value={editDraft.insurance_recipient_phone}
-                            onChange={(e) => setEditDraft((p) => ({ ...p, insurance_recipient_phone: e.target.value }))}
-                            placeholder="보험 담당자 번호 (010-XXXX-XXXX)"
-                            className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
-                          />
-                          <input
-                            value={editDraft.insurance_memo}
-                            onChange={(e) => setEditDraft((p) => ({ ...p, insurance_memo: e.target.value }))}
-                            placeholder="보험사 / 메모 (선택)"
-                            className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
-                          />
-                        </div>
-                      </div>
                       <div className="flex gap-2 pt-1">
                         <button
                           onClick={() => void handleUpdate()}
@@ -319,7 +303,16 @@ export default function VehiclesPage() {
                       </div>
                       <div className="flex gap-1.5 shrink-0 ml-2">
                         <button
-                          onClick={() => { setEditId(v.id); setEditDraft({ name: v.name, plate_number: v.plate_number, inspection_date: v.inspection_date, recipient_phone: v.recipient_phone, inspection_cycle: v.inspection_cycle, insurance_date: v.insurance_date ?? '', insurance_recipient_phone: v.insurance_recipient_phone ?? '', insurance_memo: v.insurance_memo ?? '' }); }}
+                          onClick={() => setTelegramPopup({ vehicle: v, enabled: v.telegram_notify ?? false, days: v.telegram_notify_days ?? 7, saving: false })}
+                          className={cn(
+                            'rounded-xl border px-2.5 py-1.5 text-xs font-medium',
+                            v.telegram_notify ? 'border-blue-200 bg-blue-50 text-blue-600' : 'border-neutral-200 bg-white text-neutral-400',
+                          )}
+                        >
+                          🔔
+                        </button>
+                        <button
+                          onClick={() => { setEditId(v.id); setEditDraft({ name: v.name, plate_number: v.plate_number, inspection_date: v.inspection_date, recipient_phone: v.recipient_phone, inspection_cycle: v.inspection_cycle }); }}
                           className="rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50"
                         >
                           수정
@@ -394,32 +387,6 @@ export default function VehiclesPage() {
                   ))}
                 </div>
               </div>
-              <div className="mt-1 border-t border-neutral-100 pt-3">
-                <p className="mb-2 text-xs font-semibold text-neutral-500">보험 정보 (선택)</p>
-                <div className="flex flex-col gap-2">
-                  <div>
-                    <p className="mb-1 text-xs text-neutral-500">보험 만료일</p>
-                    <input
-                      type="date"
-                      value={draft.insurance_date}
-                      onChange={(e) => setDraft((p) => ({ ...p, insurance_date: e.target.value }))}
-                      className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
-                    />
-                  </div>
-                  <input
-                    value={draft.insurance_recipient_phone}
-                    onChange={(e) => setDraft((p) => ({ ...p, insurance_recipient_phone: e.target.value }))}
-                    placeholder="보험 담당자 번호 (010-XXXX-XXXX)"
-                    className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
-                  />
-                  <input
-                    value={draft.insurance_memo}
-                    onChange={(e) => setDraft((p) => ({ ...p, insurance_memo: e.target.value }))}
-                    placeholder="보험사 / 메모 (선택)"
-                    className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm outline-none focus:border-neutral-400"
-                  />
-                </div>
-              </div>
               <button
                 onClick={() => void handleAdd()}
                 disabled={saving}
@@ -429,8 +396,56 @@ export default function VehiclesPage() {
               </button>
             </div>
           </div>
+
+          <InsuranceSection />
         </div>
       </div>
+
+      {/* 텔레그램 알림 설정 팝업 */}
+      {telegramPopup && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setTelegramPopup(null)}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-10" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-base font-bold">꼼꼼이 알림 설정</p>
+              <button onClick={() => setTelegramPopup(null)} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
+            </div>
+            <p className="mb-3 text-sm text-neutral-500">{telegramPopup.vehicle.name} ({telegramPopup.vehicle.plate_number})</p>
+            <div className="space-y-4">
+              <label className="flex items-center gap-3 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={telegramPopup.enabled}
+                  onChange={(e) => setTelegramPopup((p) => p && ({ ...p, enabled: e.target.checked }))}
+                  className="h-4 w-4 rounded"
+                />
+                텔레그램 알림 사용
+              </label>
+              {telegramPopup.enabled && (
+                <div className="flex items-center gap-3">
+                  <p className="text-sm">알림 시점:</p>
+                  <input
+                    type="number"
+                    min={1}
+                    max={90}
+                    value={telegramPopup.days}
+                    onChange={(e) => setTelegramPopup((p) => p && ({ ...p, days: Math.min(90, Math.max(1, Number(e.target.value))) }))}
+                    className="w-20 rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 text-center"
+                  />
+                  <p className="text-sm">일 전</p>
+                </div>
+              )}
+              <p className="text-xs text-neutral-400">※ 만기 당일에는 항상 알림이 발송됩니다.</p>
+              <button
+                onClick={() => void handleTelegramNotifySave()}
+                disabled={telegramPopup.saving}
+                className="w-full rounded-2xl bg-neutral-900 py-3 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {telegramPopup.saving ? '저장중' : '저장'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

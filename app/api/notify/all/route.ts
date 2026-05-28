@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { sendTelegramMessage } from '@/lib/telegram';
+import { sendSms } from '@/lib/solapi';
 
 type NotifRow = {
   chat_id: number;
@@ -68,25 +69,56 @@ export async function GET(request: Request) {
       await sendTelegramMessage('📢 <b>[오전 알림]</b> 오늘 납부 일정입니다\n\n' + morningMessages.join('\n'));
     }
 
-    // 보험 만기 알림 (D-30, D-7, D-1, 당일)
-    for (const days of [30, 7, 1, 0]) {
+    // 보험 만기 알림 — insurances 테이블
+    // 차량보험: D-7, 당일 / 화재보험: D-30, D-7, 당일
+    for (const days of [30, 7, 0]) {
       const targetDate = new Date(now);
       targetDate.setDate(now.getDate() + days);
       const dateStr = targetDate.toISOString().split('T')[0];
 
       const { data: insurances } = await supabase
-        .from('vehicle_insurances')
-        .select('insurance_name, expiry_date, vehicle:vehicles(name)')
-        .eq('expiry_date', dateStr)
-        .eq('is_active', true);
+        .from('insurances')
+        .select('insurance_name, insurance_type, insurance_company, expiry_date, notify_sms, notify_telegram, recipient_phone')
+        .eq('expiry_date', dateStr);
 
-      if (insurances && insurances.length > 0) {
-        for (const ins of insurances as unknown as { insurance_name: string; expiry_date: string; vehicle: { name: string } | null }[]) {
-          const label = days === 0 ? '오늘 만기' : `D-${days}`;
-          await sendTelegramMessage(
-            `🛡️ <b>[보험 만기 알림]</b>\n\n보험명: ${ins.insurance_name}\n차량: ${ins.vehicle?.name ?? '(미상)'}\n만기일: ${ins.expiry_date}\n${label}입니다.`
-          );
+      for (const ins of (insurances ?? []) as unknown as { insurance_name: string; insurance_type: string; insurance_company: string | null; expiry_date: string; notify_sms: boolean; notify_telegram: boolean; recipient_phone: string | null }[]) {
+        if (ins.insurance_type === '차량' && days === 30) continue;
+
+        const companyText = ins.insurance_company ? `\n보험사: ${ins.insurance_company}` : '';
+        const msg = days === 0
+          ? `🛡️ <b>[보험 만기 알림]</b>\n\n${ins.insurance_name}${companyText}\n오늘이 보험 만기일입니다.`
+          : `🛡️ <b>[보험 만기 알림]</b>\n\n${ins.insurance_name}${companyText}\n만기일: ${ins.expiry_date}\n${days}일 후 만료 예정입니다.`;
+
+        if (ins.notify_telegram) {
+          await sendTelegramMessage(msg);
         }
+        if (ins.notify_sms && ins.recipient_phone) {
+          const plainMsg = msg.replace(/<[^>]+>/g, '');
+          await sendSms(ins.recipient_phone, plainMsg);
+        }
+      }
+    }
+
+    // 차량검사 텔레그램 알림
+    const { data: telegramVehicles } = await supabase
+      .from('vehicles')
+      .select('name, plate_number, inspection_date, telegram_notify_days')
+      .eq('telegram_notify', true);
+
+    for (const v of (telegramVehicles ?? []) as unknown as { name: string; plate_number: string; inspection_date: string; telegram_notify_days: number }[]) {
+      const notifyDays = v.telegram_notify_days ?? 7;
+      const notifyDate = new Date(now);
+      notifyDate.setDate(now.getDate() + notifyDays);
+      const notifyDateStr = notifyDate.toISOString().split('T')[0];
+
+      if (v.inspection_date === notifyDateStr) {
+        await sendTelegramMessage(
+          `🚗 <b>[차량검사 알림]</b>\n\n${v.name} (${v.plate_number})\n검사 만료일: ${v.inspection_date}\n${notifyDays}일 후 만료 예정입니다.`
+        );
+      } else if (v.inspection_date === today) {
+        await sendTelegramMessage(
+          `🚗 <b>[차량검사 알림]</b>\n\n${v.name} (${v.plate_number})\n오늘이 검사 만료일입니다.`
+        );
       }
     }
   }

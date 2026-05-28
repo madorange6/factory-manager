@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase/client';
 import { Company, InventoryItem, InventoryLogRow, Vehicle } from '../lib/types';
 import { cn, formatDateTime, getErrorMessage, todayString } from '../lib/utils';
-import InsuranceSection from './InsuranceSection';
 
 type Props = {
   logs: InventoryLogRow[];
@@ -931,7 +930,6 @@ export default function CalendarTab({ logs, inventory, companies, onRefreshLogs,
         </div>
       )}
 
-      <InsuranceSection />
     </div>
   );
 }
