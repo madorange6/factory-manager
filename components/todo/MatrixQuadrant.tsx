@@ -17,11 +17,12 @@ type Props = {
   items: TodoMatrixItem[];
   dateSchedules: TodoSchedule[];
   onItemsChange: () => Promise<void>;
+  onOpenPopup: (item: TodoMatrixItem) => void;
 };
 
 type AddForm = { title: string; minutes: string; memo: string };
 
-export default function MatrixQuadrant({ date, quadrant, label, sub, colorClass, items, dateSchedules, onItemsChange }: Props) {
+export default function MatrixQuadrant({ date, quadrant, label, sub, colorClass, items, dateSchedules, onItemsChange, onOpenPopup }: Props) {
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<AddForm>({ title: '', minutes: '', memo: '' });
   const [saving, setSaving] = useState(false);
@@ -54,8 +55,8 @@ export default function MatrixQuadrant({ date, quadrant, label, sub, colorClass,
   return (
     <div className={`rounded-2xl border ${colorClass} p-2.5 flex flex-col gap-1.5 min-h-[130px]`}>
       <div className="mb-0.5">
-        <p className="text-[10px] font-bold leading-tight">{label}</p>
-        <p className="text-[9px] text-neutral-500">{sub}</p>
+        <p className="text-[12px] font-bold leading-tight">{label}</p>
+        <p className="text-[11px] text-neutral-500">{sub}</p>
       </div>
 
       {items.map((item) => (
@@ -65,6 +66,7 @@ export default function MatrixQuadrant({ date, quadrant, label, sub, colorClass,
           scheduleTitle={item.schedule_task_id != null ? taskScheduleMap.get(item.schedule_task_id) : undefined}
           onToggleComplete={onItemsChange}
           onDelete={onItemsChange}
+          onOpenPopup={onOpenPopup}
         />
       ))}
 
@@ -75,7 +77,7 @@ export default function MatrixQuadrant({ date, quadrant, label, sub, colorClass,
             onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
             placeholder="할일 내용"
             autoFocus
-            className="w-full rounded-lg border border-neutral-200 bg-white px-2 py-1 text-[11px] outline-none focus:border-neutral-400"
+            className="w-full rounded-lg border border-neutral-200 bg-white px-2 py-1 text-[13px] outline-none focus:border-neutral-400"
             onKeyDown={(e) => { if (e.key === 'Enter') void handleAdd(); }}
           />
           <input
@@ -83,19 +85,19 @@ export default function MatrixQuadrant({ date, quadrant, label, sub, colorClass,
             value={form.minutes}
             onChange={(e) => setForm((p) => ({ ...p, minutes: e.target.value }))}
             placeholder="예상 분 (선택)"
-            className="w-full rounded-lg border border-neutral-200 bg-white px-2 py-1 text-[11px] outline-none focus:border-neutral-400"
+            className="w-full rounded-lg border border-neutral-200 bg-white px-2 py-1 text-[13px] outline-none focus:border-neutral-400"
           />
           <div className="flex gap-1">
             <button
               onClick={() => void handleAdd()}
               disabled={saving || !form.title.trim()}
-              className="flex-1 rounded-lg bg-neutral-900 py-1 text-[10px] font-semibold text-white disabled:opacity-40"
+              className="flex-1 rounded-lg bg-neutral-900 py-1 text-[12px] font-semibold text-white disabled:opacity-40"
             >
               {saving ? '...' : '추가'}
             </button>
             <button
               onClick={() => { setFormOpen(false); setForm({ title: '', minutes: '', memo: '' }); }}
-              className="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-[10px] text-neutral-500"
+              className="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-[12px] text-neutral-500"
             >
               취소
             </button>
@@ -105,14 +107,14 @@ export default function MatrixQuadrant({ date, quadrant, label, sub, colorClass,
         <div className="flex gap-1 mt-auto pt-1">
           <button
             onClick={() => setFormOpen(true)}
-            className="flex-1 rounded-lg border border-neutral-200 bg-white/80 py-1 text-[10px] font-medium text-neutral-600 hover:bg-white"
+            className="flex-1 rounded-lg border border-neutral-200 bg-white/80 py-1 text-[12px] font-medium text-neutral-600 hover:bg-white"
           >
             + 추가
           </button>
           {dateSchedules.length > 0 && (
             <button
               onClick={() => setShowPicker((p) => !p)}
-              className="rounded-lg border border-neutral-200 bg-white/80 px-1.5 py-1 text-[10px] font-medium text-neutral-600 hover:bg-white"
+              className="rounded-lg border border-neutral-200 bg-white/80 px-1.5 py-1 text-[12px] font-medium text-neutral-600 hover:bg-white"
               title="기간 스케줄에서 가져오기"
             >
               📋
