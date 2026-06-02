@@ -253,21 +253,30 @@ export default function Page() {
 
         {/* 하단 탭 네비게이션 */}
         <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-md -translate-x-1/2 border-t border-neutral-200 bg-white/95 pb-[calc(env(safe-area-inset-bottom)+8px)] pt-2 backdrop-blur">
-          <div className={cn('grid gap-1 px-2', TAB_ITEMS.length === 6 ? 'grid-cols-6' : TAB_ITEMS.length === 5 ? 'grid-cols-5' : TAB_ITEMS.length === 4 ? 'grid-cols-4' : 'grid-cols-3')}>
-            {TAB_ITEMS.map(({ key, icon, label }) => (
-              <button
-                key={key}
-                onClick={() => setActiveTab(key)}
-                className={cn(
-                  'flex flex-col items-center justify-center rounded-2xl px-1 py-2 transition',
-                  activeTab === key ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-500',
-                )}
-              >
-                <span className="text-base">{icon}</span>
-                <span className="mt-0.5 text-[10px] font-medium">{label}</span>
-              </button>
-            ))}
-          </div>
+          {(() => {
+            const navItems: { key: string; icon: string; label: string; href?: string }[] = [
+              ...TAB_ITEMS,
+              ...(isAdmin ? [{ key: 'todo', icon: '📋', label: '할일', href: '/todo' }] : []),
+            ];
+            const cols = navItems.length >= 6 ? 'grid-cols-6' : navItems.length === 5 ? 'grid-cols-5' : navItems.length === 4 ? 'grid-cols-4' : 'grid-cols-3';
+            return (
+              <div className={cn('grid gap-1 px-2', cols)}>
+                {navItems.map(({ key, icon, label, href }) => (
+                  <button
+                    key={key}
+                    onClick={() => href ? router.push(href) : setActiveTab(key as TabKey)}
+                    className={cn(
+                      'flex flex-col items-center justify-center rounded-2xl px-1 py-2 transition',
+                      !href && activeTab === key ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-500',
+                    )}
+                  >
+                    <span className="text-base">{icon}</span>
+                    <span className="mt-0.5 text-[10px] font-medium">{label}</span>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
         </nav>
       </div>
     </main>

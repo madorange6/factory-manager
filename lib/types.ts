@@ -297,6 +297,35 @@ export type ChatNotification = {
   created_at: string;
 };
 
+export type TodoScheduleTask = {
+  id: number;
+  schedule_id: number;
+  title: string;
+  created_at: string;
+};
+
+export type TodoSchedule = {
+  id: number;
+  title: string;
+  start_date: string;
+  end_date: string;
+  color: 'yellow' | 'green' | 'blue' | 'pink';
+  created_at: string;
+  todo_schedule_tasks?: TodoScheduleTask[];
+};
+
+export type TodoMatrixItem = {
+  id: number;
+  date: string;
+  quadrant: 'urgent_important' | 'urgent_not_important' | 'not_urgent_important' | 'not_urgent_not_important';
+  title: string;
+  estimated_minutes: number | null;
+  is_completed: boolean;
+  memo: string | null;
+  schedule_task_id: number | null;
+  created_at: string;
+};
+
 export type QuickPanelState = {
   isOpen: boolean;
   date: string;
