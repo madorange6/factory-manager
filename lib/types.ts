@@ -323,6 +323,17 @@ export type TodoMatrixItem = {
   is_completed: boolean;
   memo: string | null;
   schedule_task_id: number | null;
+  is_postponed: boolean;
+  postponed_from_date: string | null;
+  postponed_to_date: string | null;
+  created_at: string;
+};
+
+export type TodoMatrixSubtask = {
+  id: number;
+  matrix_item_id: number;
+  title: string;
+  is_completed: boolean;
   created_at: string;
 };
 
