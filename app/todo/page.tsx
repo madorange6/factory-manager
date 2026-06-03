@@ -8,6 +8,7 @@ import TodoCalendar from '../../components/todo/TodoCalendar';
 import MatrixModal from '../../components/todo/MatrixModal';
 import ScheduleModal from '../../components/todo/ScheduleModal';
 import ScheduleList from '../../components/todo/ScheduleList';
+import NotifySettingsPopup from '../../components/todo/NotifySettingsPopup';
 
 const ADMIN_EMAIL = 'sj_advisory@naver.com';
 
@@ -23,6 +24,7 @@ export default function TodoPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [editSchedule, setEditSchedule] = useState<TodoSchedule | null>(null);
+  const [showNotifySettings, setShowNotifySettings] = useState(false);
 
   useEffect(() => { void init(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -101,6 +103,12 @@ export default function TodoPage() {
                 + 기간 스케줄
               </button>
               <button
+                onClick={() => setShowNotifySettings(true)}
+                className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-base leading-none"
+              >
+                🔔
+              </button>
+              <button
                 onClick={() => router.push('/')}
                 className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700"
               >
@@ -144,6 +152,10 @@ export default function TodoPage() {
             onSave={() => fetchAll(year, month)}
             onClose={() => { setShowScheduleModal(false); setEditSchedule(null); }}
           />
+        )}
+
+        {showNotifySettings && (
+          <NotifySettingsPopup onClose={() => setShowNotifySettings(false)} />
         )}
       </div>
     </main>

@@ -12,6 +12,12 @@ type NotifRow = {
   repeat_day_of_month: number | null;
 };
 
+type NotifySetting = {
+  key: string;
+  is_enabled: boolean;
+  notify_hour_kst: number;
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function fetchMessageContents(supabase: any, ids: number[]): Promise<Map<number, string>> {
   if (ids.length === 0) return new Map();
@@ -34,8 +40,17 @@ export async function GET(request: Request) {
   const today = now.toISOString().split('T')[0];
   const currentHour = now.getUTCHours();
 
-  // ── 오전 9시 알림 (UTC 0시 = KST 9시) ───────────────
-  if (currentHour === 0) {
+  const { data: settingsData } = await supabase.from('notify_settings').select('key, is_enabled, notify_hour_kst');
+  const settingsMap = new Map((settingsData ?? [] as NotifySetting[]).map((s: NotifySetting) => [s.key, s]));
+
+  function shouldRun(key: string): boolean {
+    const s = settingsMap.get(key);
+    if (!s || !s.is_enabled) return false;
+    return ((s.notify_hour_kst - 9 + 24) % 24) === currentHour;
+  }
+
+  // ── 오전 세금·대출 알림 ────────────────────────────────
+  if (shouldRun('morning_finance')) {
     const morningMessages: string[] = [];
 
     const { data: taxPayments } = await supabase
@@ -123,8 +138,8 @@ export async function GET(request: Request) {
     }
   }
 
-  // ── 오후 9시 재알림 (UTC 12시 = KST 21시) ───────────
-  if (currentHour === 12) {
+  // ── 오후 미납 재알림 ──────────────────────────────────
+  if (shouldRun('evening_finance')) {
     const eveningMessages: string[] = [];
 
     const { data: taxPayments } = await supabase
@@ -156,6 +171,26 @@ export async function GET(request: Request) {
 
     if (eveningMessages.length > 0) {
       await sendTelegramMessage('⚠️ <b>[미납 재알림]</b> 아직 미체크 항목이 있습니다\n\n' + eveningMessages.join('\n'));
+    }
+  }
+
+  // ── 긴급 할일 미완료 알림 ─────────────────────────────
+  if (shouldRun('urgent_todo')) {
+    const { data: urgentItems } = await supabase
+      .from('todo_matrix_items')
+      .select('title, quadrant')
+      .eq('date', today)
+      .in('quadrant', ['urgent_important', 'urgent_not_important'])
+      .eq('is_completed', false)
+      .is('postponed_to_date', null)
+      .order('quadrant');
+
+    if (urgentItems && urgentItems.length > 0) {
+      const lines = (urgentItems as { title: string; quadrant: string }[]).map((it) => {
+        const prefix = it.quadrant === 'urgent_important' ? '🔴' : '🟠';
+        return `${prefix} ${it.title}`;
+      });
+      await sendTelegramMessage(`⏰ <b>[할일 체크]</b> 미완료 긴급 항목\n\n${lines.join('\n')}`);
     }
   }
 
