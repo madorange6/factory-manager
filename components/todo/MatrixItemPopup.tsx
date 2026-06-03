@@ -14,11 +14,13 @@ export default function MatrixItemPopup({ item, onClose, onSave }: Props) {
   const [title, setTitle] = useState(item.title);
   const [minutes, setMinutes] = useState(item.estimated_minutes != null ? String(item.estimated_minutes) : '');
   const [memo, setMemo] = useState(item.memo ?? '');
+  const [quadrant, setQuadrant] = useState(item.quadrant);
   const [subtasks, setSubtasks] = useState<TodoMatrixSubtask[]>([]);
   const [newSubtask, setNewSubtask] = useState('');
   const [postponeEnabled, setPostponeEnabled] = useState(false);
   const [postponeDate, setPostponeDate] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchSubtasks = useCallback(async () => {
     const { data } = await supabase
@@ -39,7 +41,7 @@ export default function MatrixItemPopup({ item, onClose, onSave }: Props) {
         // 새 날짜에 복사본 생성 (밀림 from 표시)
         await supabase.from('todo_matrix_items').insert({
           date: postponeDate,
-          quadrant: item.quadrant,
+          quadrant,
           title: title.trim(),
           estimated_minutes: minutes ? Number(minutes) : null,
           memo: memo.trim() || null,
@@ -52,6 +54,7 @@ export default function MatrixItemPopup({ item, onClose, onSave }: Props) {
           title: title.trim(),
           estimated_minutes: minutes ? Number(minutes) : null,
           memo: memo.trim() || null,
+          quadrant,
           is_postponed: true,
           postponed_to_date: postponeDate,
         }).eq('id', item.id);
@@ -60,12 +63,25 @@ export default function MatrixItemPopup({ item, onClose, onSave }: Props) {
           title: title.trim(),
           estimated_minutes: minutes ? Number(minutes) : null,
           memo: memo.trim() || null,
+          quadrant,
         }).eq('id', item.id);
       }
       await onSave();
       onClose();
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!window.confirm('삭제할까요?')) return;
+    setDeleting(true);
+    try {
+      await supabase.from('todo_matrix_items').delete().eq('id', item.id);
+      await onSave();
+      onClose();
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -98,10 +114,44 @@ export default function MatrixItemPopup({ item, onClose, onSave }: Props) {
       >
         <div className="mb-4 flex items-center justify-between">
           <p className="text-base font-bold">할일 상세</p>
-          <button onClick={onClose} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => void handleDelete()}
+              disabled={deleting}
+              className="rounded-full border border-red-200 px-3 py-1 text-xs text-red-500 disabled:opacity-40"
+            >
+              {deleting ? '삭제중' : '삭제'}
+            </button>
+            <button onClick={onClose} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
+          </div>
         </div>
 
         <div className="space-y-4">
+          {/* 사분면 */}
+          <div>
+            <p className="mb-1 text-xs text-neutral-500">매트릭스</p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {([
+                { key: 'urgent_important', label: '🔴 긴급+중요' },
+                { key: 'urgent_not_important', label: '🟠 긴급+비중요' },
+                { key: 'not_urgent_important', label: '🔵 비긴급+중요' },
+                { key: 'not_urgent_not_important', label: '⚫ 비긴급+비중요' },
+              ] as const).map((q) => (
+                <button
+                  key={q.key}
+                  onClick={() => setQuadrant(q.key)}
+                  className={`rounded-xl border px-3 py-2 text-xs font-medium text-left transition ${
+                    quadrant === q.key
+                      ? 'border-neutral-900 bg-neutral-900 text-white'
+                      : 'border-neutral-200 bg-neutral-50 text-neutral-600'
+                  }`}
+                >
+                  {q.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* 제목 */}
           <div>
             <p className="mb-1 text-xs text-neutral-500">제목</p>
