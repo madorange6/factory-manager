@@ -20,7 +20,7 @@ type Props = {
   onClose: () => void;
 };
 
-type TaskDraft = { id: string; title: string };
+type TaskDraft = { id: string; title: string; is_completed: boolean };
 
 export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
   const [title, setTitle] = useState(schedule?.title ?? '');
@@ -28,12 +28,19 @@ export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
   const [endDate, setEndDate] = useState(schedule?.end_date ?? '');
   const [color, setColor] = useState<typeof COLORS[number]>(schedule?.color ?? 'yellow');
   const [tasks, setTasks] = useState<TaskDraft[]>(
-    schedule?.todo_schedule_tasks?.map((t) => ({ id: String(t.id), title: t.title })) ?? []
+    schedule?.todo_schedule_tasks?.map((t) => ({ id: String(t.id), title: t.title, is_completed: t.is_completed })) ?? []
   );
   const [saving, setSaving] = useState(false);
 
   function addTask() {
-    setTasks((p) => [...p, { id: `new-${Date.now()}`, title: '' }]);
+    setTasks((p) => [...p, { id: `new-${Date.now()}`, title: '', is_completed: false }]);
+  }
+
+  async function toggleTask(id: string, current: boolean) {
+    setTasks((p) => p.map((t) => t.id === id ? { ...t, is_completed: !current } : t));
+    if (!id.startsWith('new-')) {
+      await supabase.from('todo_schedule_tasks').update({ is_completed: !current }).eq('id', Number(id));
+    }
   }
 
   function updateTask(id: string, val: string) {
@@ -66,7 +73,7 @@ export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
         const validTasks = tasks.filter((t) => t.title.trim());
         if (validTasks.length > 0) {
           await supabase.from('todo_schedule_tasks').insert(
-            validTasks.map((t) => ({ schedule_id: scheduleId!, title: t.title.trim() }))
+            validTasks.map((t) => ({ schedule_id: scheduleId!, title: t.title.trim(), is_completed: t.is_completed }))
           );
         }
       }
@@ -147,12 +154,18 @@ export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
               <button onClick={addTask} className="text-xs text-neutral-600 underline">+ 추가</button>
             </div>
             {tasks.map((t) => (
-              <div key={t.id} className="flex gap-2 mb-1.5">
+              <div key={t.id} className="flex items-center gap-2 mb-1.5">
+                <input
+                  type="checkbox"
+                  checked={t.is_completed}
+                  onChange={() => void toggleTask(t.id, t.is_completed)}
+                  className="h-4 w-4 shrink-0 cursor-pointer"
+                />
                 <input
                   value={t.title}
                   onChange={(e) => updateTask(t.id, e.target.value)}
                   placeholder="할일 내용"
-                  className="flex-1 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                  className={`flex-1 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm outline-none focus:border-neutral-400 ${t.is_completed ? 'line-through text-neutral-400' : ''}`}
                 />
                 <button
                   onClick={() => removeTask(t.id)}
