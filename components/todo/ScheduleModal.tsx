@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase/client';
 import { TodoSchedule } from '../../lib/types';
 import { cn } from '../../lib/utils';
@@ -31,6 +31,18 @@ export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
     schedule?.todo_schedule_tasks?.map((t) => ({ id: String(t.id), title: t.title, is_completed: t.is_completed })) ?? []
   );
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!schedule) return;
+    void supabase
+      .from('todo_schedule_tasks')
+      .select('id, title, is_completed')
+      .eq('schedule_id', schedule.id)
+      .order('created_at')
+      .then(({ data }) => {
+        if (data) setTasks(data.map((t: { id: number; title: string; is_completed: boolean }) => ({ id: String(t.id), title: t.title, is_completed: t.is_completed })));
+      });
+  }, [schedule?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function addTask() {
     setTasks((p) => [...p, { id: `new-${Date.now()}`, title: '', is_completed: false }]);
