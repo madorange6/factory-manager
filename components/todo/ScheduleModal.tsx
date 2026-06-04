@@ -39,7 +39,9 @@ export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
   async function toggleTask(id: string, current: boolean) {
     setTasks((p) => p.map((t) => t.id === id ? { ...t, is_completed: !current } : t));
     if (!id.startsWith('new-')) {
-      await supabase.from('todo_schedule_tasks').update({ is_completed: !current }).eq('id', Number(id));
+      const numId = Number(id);
+      await supabase.from('todo_schedule_tasks').update({ is_completed: !current }).eq('id', numId);
+      await supabase.from('todo_matrix_items').update({ is_completed: !current }).eq('schedule_task_id', numId);
     }
   }
 
