@@ -19,6 +19,8 @@ export default function MatrixItemPopup({ item, onClose, onSave }: Props) {
   const [newSubtask, setNewSubtask] = useState('');
   const [postponeEnabled, setPostponeEnabled] = useState(false);
   const [postponeDate, setPostponeDate] = useState('');
+  const [notifyEnabled, setNotifyEnabled] = useState(item.notify_enabled);
+  const [notifyHour, setNotifyHour] = useState(item.notify_hour_kst ?? 9);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -55,6 +57,8 @@ export default function MatrixItemPopup({ item, onClose, onSave }: Props) {
           estimated_minutes: minutes ? Number(minutes) : null,
           memo: memo.trim() || null,
           quadrant,
+          notify_enabled: notifyEnabled,
+          notify_hour_kst: notifyEnabled ? notifyHour : null,
           is_postponed: true,
           postponed_to_date: postponeDate,
         }).eq('id', item.id);
@@ -64,6 +68,8 @@ export default function MatrixItemPopup({ item, onClose, onSave }: Props) {
           estimated_minutes: minutes ? Number(minutes) : null,
           memo: memo.trim() || null,
           quadrant,
+          notify_enabled: notifyEnabled,
+          notify_hour_kst: notifyEnabled ? notifyHour : null,
         }).eq('id', item.id);
       }
       await onSave();
@@ -254,6 +260,34 @@ export default function MatrixItemPopup({ item, onClose, onSave }: Props) {
                     원래 날짜({item.date})에 흔적이 남고, {postponeDate}에 새로 생성돼.
                   </p>
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* 개별 알림 */}
+          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3.5">
+            <label className="flex items-center gap-2.5 text-sm font-medium cursor-pointer">
+              <input
+                type="checkbox"
+                checked={notifyEnabled}
+                onChange={(e) => setNotifyEnabled(e.target.checked)}
+                className="h-4 w-4"
+              />
+              🔔 개별 알림
+            </label>
+            {notifyEnabled && (
+              <div className="mt-3 flex items-center gap-2">
+                <p className="text-xs text-neutral-500">알림 시간</p>
+                <select
+                  value={notifyHour}
+                  onChange={(e) => setNotifyHour(Number(e.target.value))}
+                  className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm outline-none"
+                >
+                  {Array.from({ length: 24 }, (_, i) => {
+                    const label = i === 0 ? '오전 12시' : i < 12 ? `오전 ${i}시` : i === 12 ? '오후 12시' : `오후 ${i - 12}시`;
+                    return <option key={i} value={i}>{label}</option>;
+                  })}
+                </select>
               </div>
             )}
           </div>

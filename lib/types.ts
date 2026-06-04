@@ -326,6 +326,8 @@ export type TodoMatrixItem = {
   is_postponed: boolean;
   postponed_from_date: string | null;
   postponed_to_date: string | null;
+  notify_enabled: boolean;
+  notify_hour_kst: number | null;
   created_at: string;
 };
 

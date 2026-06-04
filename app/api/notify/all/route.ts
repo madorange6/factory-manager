@@ -194,6 +194,27 @@ export async function GET(request: Request) {
     }
   }
 
+  // ── 할일 개별 알림 ────────────────────────────────────
+  {
+    const { data: itemNotifs } = await supabase
+      .from('todo_matrix_items')
+      .select('title, quadrant, notify_hour_kst')
+      .eq('date', today)
+      .eq('notify_enabled', true)
+      .eq('is_completed', false)
+      .is('postponed_to_date', null);
+
+    for (const it of (itemNotifs ?? []) as { title: string; quadrant: string; notify_hour_kst: number }[]) {
+      if (it.notify_hour_kst == null) continue;
+      const utcHour = ((it.notify_hour_kst - 9 + 24) % 24);
+      if (utcHour !== currentHour) continue;
+      const prefix = it.quadrant === 'urgent_important' ? '🔴'
+        : it.quadrant === 'urgent_not_important' ? '🟠'
+        : it.quadrant === 'not_urgent_important' ? '🔵' : '⚫';
+      await sendTelegramMessage(`🔔 <b>[할일 알림]</b>\n\n${prefix} ${it.title}`);
+    }
+  }
+
   // ── 채팅 D-day 알림 ───────────────────────────────────
   const { data: ddayRaw } = await supabase
     .from('chat_notifications')
