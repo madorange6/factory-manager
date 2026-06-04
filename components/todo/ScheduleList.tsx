@@ -28,9 +28,16 @@ export default function ScheduleList({ schedules, onEdit, onDelete }: Props) {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold truncate">{s.title}</p>
             <p className="text-xs text-neutral-400">{s.start_date} ~ {s.end_date}</p>
-            {(s.todo_schedule_tasks?.length ?? 0) > 0 && (
-              <p className="text-xs text-neutral-400">{s.todo_schedule_tasks!.length}개 할일</p>
-            )}
+            {(s.todo_schedule_tasks?.length ?? 0) > 0 && (() => {
+              const total = s.todo_schedule_tasks!.length;
+              const done = s.todo_schedule_tasks!.filter((t) => t.is_completed).length;
+              return (
+                <p className="text-xs text-neutral-400">
+                  {done}/{total} 완료
+                  {done === total && total > 0 && <span className="ml-1 text-green-500 font-medium">✓</span>}
+                </p>
+              );
+            })()}
           </div>
           <div className="flex gap-1 shrink-0">
             <button

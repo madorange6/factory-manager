@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase/client';
 import { TodoMatrixItem } from '../../lib/types';
 
@@ -14,6 +14,7 @@ type Props = {
 
 export default function MatrixItem({ item, scheduleTitle, onToggleComplete, onDelete, onOpenPopup }: Props) {
   const lastTapRef = useRef(0);
+  const [deleteMode, setDeleteMode] = useState(false);
 
   async function toggle() {
     await supabase.from('todo_matrix_items').update({ is_completed: !item.is_completed }).eq('id', item.id);
@@ -23,13 +24,11 @@ export default function MatrixItem({ item, scheduleTitle, onToggleComplete, onDe
     await onToggleComplete();
   }
 
-  async function handleDelete() {
-    if (!window.confirm('삭제할까요?')) return;
+  async function handleDelete(alsoDeleteSchedule: boolean) {
+    setDeleteMode(false);
     await supabase.from('todo_matrix_items').delete().eq('id', item.id);
-    if (item.schedule_task_id != null) {
-      if (window.confirm('연결된 스케줄 세부할일도 삭제할까요?')) {
-        await supabase.from('todo_schedule_tasks').delete().eq('id', item.schedule_task_id);
-      }
+    if (alsoDeleteSchedule && item.schedule_task_id != null) {
+      await supabase.from('todo_schedule_tasks').delete().eq('id', item.schedule_task_id);
     }
     await onDelete();
   }
@@ -98,12 +97,22 @@ export default function MatrixItem({ item, scheduleTitle, onToggleComplete, onDe
             </p>
           )}
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); void handleDelete(); }}
-          className="shrink-0 text-[13px] text-neutral-300 hover:text-red-400 leading-none"
-        >
-          ✕
-        </button>
+        {deleteMode ? (
+          <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setDeleteMode(false)} className="text-[11px] text-neutral-400">취소</button>
+            {item.schedule_task_id != null && (
+              <button onClick={() => void handleDelete(true)} className="text-[11px] text-red-500 font-semibold">스케줄도</button>
+            )}
+            <button onClick={() => void handleDelete(false)} className="text-[11px] text-red-400 font-semibold">삭제</button>
+          </div>
+        ) : (
+          <button
+            onClick={(e) => { e.stopPropagation(); setDeleteMode(true); }}
+            className="shrink-0 text-[13px] text-neutral-300 hover:text-red-400 leading-none"
+          >
+            ✕
+          </button>
+        )}
       </div>
     </div>
   );

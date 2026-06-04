@@ -67,8 +67,14 @@ export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
     setTasks((p) => p.map((t) => t.id === id ? { ...t, title: val } : t));
   }
 
-  function removeTask(id: string) {
+  async function removeTask(id: string) {
     setTasks((p) => p.filter((t) => t.id !== id));
+    if (!id.startsWith('new-')) {
+      const numId = Number(id);
+      await supabase.from('todo_matrix_items').delete().eq('schedule_task_id', numId);
+      await supabase.from('todo_schedule_tasks').delete().eq('id', numId);
+      loadedIdsRef.current = loadedIdsRef.current.filter((i) => i !== numId);
+    }
   }
 
   async function handleSave() {
@@ -83,15 +89,7 @@ export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
         }).eq('id', schedule.id);
         scheduleId = schedule.id;
 
-        // 기존 task 중 UI에서 제거된 것만 DELETE (ID 보존)
-        const currentIds = tasks.filter((t) => !t.id.startsWith('new-')).map((t) => Number(t.id));
-        const removedIds = loadedIdsRef.current.filter((id) => !currentIds.includes(id));
-        for (const id of removedIds) {
-          await supabase.from('todo_matrix_items').delete().eq('schedule_task_id', id);
-          await supabase.from('todo_schedule_tasks').delete().eq('id', id);
-        }
-
-        // 기존 task 제목만 UPDATE (is_completed·ID 유지)
+        // 기존 task 제목만 UPDATE (is_completed·ID 유지, 삭제는 removeTask에서 즉시 처리)
         for (const t of tasks.filter((t) => !t.id.startsWith('new-') && t.title.trim())) {
           await supabase.from('todo_schedule_tasks').update({ title: t.title.trim() }).eq('id', Number(t.id));
         }
@@ -202,7 +200,7 @@ export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
                   className={`flex-1 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm outline-none focus:border-neutral-400 ${t.is_completed ? 'line-through text-neutral-400' : ''}`}
                 />
                 <button
-                  onClick={() => removeTask(t.id)}
+                  onClick={() => void removeTask(t.id)}
                   className="rounded-xl border border-neutral-200 px-2.5 py-2 text-neutral-400 hover:text-red-500"
                 >
                   ✕
