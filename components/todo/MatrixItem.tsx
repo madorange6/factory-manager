@@ -26,6 +26,11 @@ export default function MatrixItem({ item, scheduleTitle, onToggleComplete, onDe
   async function handleDelete() {
     if (!window.confirm('삭제할까요?')) return;
     await supabase.from('todo_matrix_items').delete().eq('id', item.id);
+    if (item.schedule_task_id != null) {
+      if (window.confirm('연결된 스케줄 세부할일도 삭제할까요?')) {
+        await supabase.from('todo_schedule_tasks').delete().eq('id', item.schedule_task_id);
+      }
+    }
     await onDelete();
   }
 

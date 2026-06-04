@@ -87,6 +87,7 @@ export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
         const currentIds = tasks.filter((t) => !t.id.startsWith('new-')).map((t) => Number(t.id));
         const removedIds = loadedIdsRef.current.filter((id) => !currentIds.includes(id));
         for (const id of removedIds) {
+          await supabase.from('todo_matrix_items').delete().eq('schedule_task_id', id);
           await supabase.from('todo_schedule_tasks').delete().eq('id', id);
         }
 
