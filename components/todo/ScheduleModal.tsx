@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase/client';
 import { TodoSchedule } from '../../lib/types';
 import { cn } from '../../lib/utils';
@@ -31,6 +31,9 @@ export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
     schedule?.todo_schedule_tasks?.map((t) => ({ id: String(t.id), title: t.title, is_completed: t.is_completed })) ?? []
   );
   const [saving, setSaving] = useState(false);
+  const loadedIdsRef = useRef<number[]>(
+    schedule?.todo_schedule_tasks?.map((t) => t.id) ?? []
+  );
 
   useEffect(() => {
     if (!schedule) return;
@@ -40,7 +43,10 @@ export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
       .eq('schedule_id', schedule.id)
       .order('created_at')
       .then(({ data }) => {
-        if (data) setTasks(data.map((t: { id: number; title: string; is_completed: boolean }) => ({ id: String(t.id), title: t.title, is_completed: t.is_completed })));
+        if (data) {
+          setTasks(data.map((t: { id: number; title: string; is_completed: boolean }) => ({ id: String(t.id), title: t.title, is_completed: t.is_completed })));
+          loadedIdsRef.current = data.map((t: { id: number }) => t.id);
+        }
       });
   }, [schedule?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -70,12 +76,24 @@ export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
     setSaving(true);
     try {
       let scheduleId: number | undefined;
+
       if (schedule) {
         await supabase.from('todo_schedules').update({
           title: title.trim(), start_date: startDate, end_date: endDate, color,
         }).eq('id', schedule.id);
-        await supabase.from('todo_schedule_tasks').delete().eq('schedule_id', schedule.id);
         scheduleId = schedule.id;
+
+        // 기존 task 중 UI에서 제거된 것만 DELETE (ID 보존)
+        const currentIds = tasks.filter((t) => !t.id.startsWith('new-')).map((t) => Number(t.id));
+        const removedIds = loadedIdsRef.current.filter((id) => !currentIds.includes(id));
+        for (const id of removedIds) {
+          await supabase.from('todo_schedule_tasks').delete().eq('id', id);
+        }
+
+        // 기존 task 제목만 UPDATE (is_completed·ID 유지)
+        for (const t of tasks.filter((t) => !t.id.startsWith('new-') && t.title.trim())) {
+          await supabase.from('todo_schedule_tasks').update({ title: t.title.trim() }).eq('id', Number(t.id));
+        }
       } else {
         const { data } = await supabase.from('todo_schedules').insert({
           title: title.trim(), start_date: startDate, end_date: endDate, color,
@@ -83,11 +101,12 @@ export default function ScheduleModal({ schedule, onSave, onClose }: Props) {
         scheduleId = (data as { id: number } | null)?.id;
       }
 
+      // 새로 추가된 task INSERT
       if (scheduleId) {
-        const validTasks = tasks.filter((t) => t.title.trim());
-        if (validTasks.length > 0) {
+        const newTasks = tasks.filter((t) => t.id.startsWith('new-') && t.title.trim());
+        if (newTasks.length > 0) {
           await supabase.from('todo_schedule_tasks').insert(
-            validTasks.map((t) => ({ schedule_id: scheduleId!, title: t.title.trim(), is_completed: t.is_completed }))
+            newTasks.map((t) => ({ schedule_id: scheduleId!, title: t.title.trim(), is_completed: t.is_completed }))
           );
         }
       }
