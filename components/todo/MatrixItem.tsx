@@ -17,6 +17,9 @@ export default function MatrixItem({ item, scheduleTitle, onToggleComplete, onDe
 
   async function toggle() {
     await supabase.from('todo_matrix_items').update({ is_completed: !item.is_completed }).eq('id', item.id);
+    if (item.schedule_task_id != null) {
+      await supabase.from('todo_schedule_tasks').update({ is_completed: !item.is_completed }).eq('id', item.schedule_task_id);
+    }
     await onToggleComplete();
   }
 
