@@ -2,13 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase/client';
-import { CashFlow, Invoice, InvoiceItem, Payment } from '../lib/types';
+import { CashFlow, Invoice, InvoiceItem, Payment, SettlementGroup } from '../lib/types';
 import { cn, formatCurrency, getErrorMessage, todayString } from '../lib/utils';
 import TaxSection from './TaxSection';
 import LoanSection from './LoanSection';
 
 type InvoiceWithDetails = Invoice & { items: InvoiceItem[]; payments: Payment[] };
 type FactoryFilter = 'all' | '1공장' | '2공장';
+
+type SettlementGroupForCalendar = SettlementGroup & {
+  company_name: string;
+  direction: 'receivable' | 'payable';
+  total: number;
+  payments: { id: number; amount: number; date: string; memo: string | null }[];
+};
 
 type RawPaymentFromDB = {
   id: number;
@@ -147,6 +154,7 @@ export default function FinanceCalendarTab() {
   const [olbaroSubmissions, setOlbaroSubmissions] = useState<OlbaroSubmission[]>([]);
   const [taxDates, setTaxDates] = useState<Set<string>>(new Set());
   const [loanDates, setLoanDates] = useState<Set<string>>(new Set());
+  const [settlementGroupsForCalendar, setSettlementGroupsForCalendar] = useState<SettlementGroupForCalendar[]>([]);
 
   // ── 패치 ──
   async function fetchInvoices() {
@@ -154,10 +162,35 @@ export default function FinanceCalendarTab() {
       .from('invoices')
       .select('*, items:invoice_items(*), payments:payments(*)')
       .not('due_date', 'is', null)
+      .is('settlement_group_id', null)
       .order('due_date', { ascending: true });
     if (error) throw error;
     setInvoices((data ?? []) as InvoiceWithDetails[]);
   }
+
+  const fetchSettlementGroups = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('settlement_groups')
+      .select('*, invoices:invoices(company_name, direction, items:invoice_items(supply_amount, tax_amount)), payments:payments(id, amount, date, memo)')
+      .not('due_date', 'is', null);
+    if (error) return;
+    const groups: SettlementGroupForCalendar[] = ((data ?? []) as (SettlementGroup & {
+      invoices: { company_name: string; direction: string; items: { supply_amount: number; tax_amount: number }[] }[];
+      payments: { id: number; amount: number; date: string; memo: string | null }[];
+    })[]).map((g) => {
+      const firstInv = g.invoices?.[0];
+      const total = (g.invoices ?? []).reduce((s, inv) =>
+        s + (inv.items ?? []).reduce((ss, it) => ss + Number(it.supply_amount) + Number(it.tax_amount), 0), 0);
+      return {
+        ...g,
+        company_name: firstInv?.company_name ?? '',
+        direction: (firstInv?.direction ?? 'receivable') as 'receivable' | 'payable',
+        total,
+        payments: g.payments ?? [],
+      };
+    });
+    setSettlementGroupsForCalendar(groups);
+  }, []);
 
   const fetchCashFlows = useCallback(async (y: number, m: number) => {
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -185,6 +218,7 @@ export default function FinanceCalendarTab() {
           all_payments:payments(amount)
         )
       `)
+      .is('settlement_group_id', null)
       .gte('date', from).lte('date', to)
       .order('date', { ascending: true });
     if (error) throw error;
@@ -270,6 +304,7 @@ export default function FinanceCalendarTab() {
         setLoading(true);
         await Promise.all([
           fetchInvoices(),
+          fetchSettlementGroups(),
           fetchCashFlows(today.getFullYear(), today.getMonth()),
           ensureRecurringCashFlows(today.getFullYear(), today.getMonth()),
           fetchMonthPayments(today.getFullYear(), today.getMonth()),
@@ -293,7 +328,7 @@ export default function FinanceCalendarTab() {
 
   // 결제 후 invoices + monthPayments 갱신
   async function refreshAfterPayment() {
-    await Promise.all([fetchInvoices(), fetchMonthPayments(year, month)]);
+    await Promise.all([fetchInvoices(), fetchSettlementGroups(), fetchMonthPayments(year, month)]);
   }
 
   async function handleCheckCf(cf: CashFlow, checked: boolean) {
@@ -325,10 +360,26 @@ export default function FinanceCalendarTab() {
     if (y === year && m === month + 1) invoiceDates.add(key);
   });
 
+  // settlement groups with due_date in the current month
+  const filteredGroups = settlementGroupsForCalendar.filter((g) => {
+    if (!g.due_date) return false;
+    const [gy, gm] = g.due_date.slice(0, 10).split('-').map(Number);
+    return gy === year && gm === month + 1;
+  });
+  filteredGroups.forEach((g) => invoiceDates.add(g.due_date!.slice(0, 10)));
+
   const filteredPayments = monthPayments.filter((p) =>
     factoryFilter === 'all' ? true : p.invoiceFactory === factoryFilter
   );
   const paymentDates = new Set<string>(filteredPayments.map((p) => p.date.slice(0, 10)));
+
+  // settlement group payments in the current month
+  const allGroupPaymentsForMonth = settlementGroupsForCalendar.flatMap((g) =>
+    g.payments
+      .filter((p) => { const [py, pm] = p.date.slice(0, 10).split('-').map(Number); return py === year && pm === month + 1; })
+      .map((p) => ({ ...p, groupId: g.id, company_name: g.company_name, direction: g.direction }))
+  );
+  allGroupPaymentsForMonth.forEach((p) => paymentDates.add(p.date.slice(0, 10)));
 
   const olbaroPendingDates = new Set<string>();
   const olbaroDoneDates = new Set<string>();
@@ -363,29 +414,41 @@ export default function FinanceCalendarTab() {
   const selectedOlbaroSubmissions = selectedDate
     ? olbaroSubmissions.filter(s => s.downloaded_at.slice(0, 10) === selectedDate)
     : [];
+  const selectedGroups = selectedDate
+    ? filteredGroups.filter((g) => g.due_date?.slice(0, 10) === selectedDate)
+    : [];
+  const selectedGroupPayments = selectedDate
+    ? allGroupPaymentsForMonth.filter((p) => p.date.slice(0, 10) === selectedDate)
+    : [];
 
   // 실행 토글 아이템
   const executedPayments = selectedPayments;
   const executedCfs = selectedCashFlows.filter(cf => cf.status === 'done');
-  const hasExecuted = executedPayments.length > 0 || executedCfs.length > 0;
+  const hasExecuted = executedPayments.length > 0 || executedCfs.length > 0 || selectedGroupPayments.length > 0;
 
   // 예정 토글 아이템
   const plannedCfs = selectedCashFlows.filter(cf => cf.status !== 'done');
-  const hasPlanned = selectedInvoices.length > 0 || plannedCfs.length > 0;
+  const hasPlanned = selectedInvoices.length > 0 || plannedCfs.length > 0 || selectedGroups.length > 0;
 
   // 실행 합계
   const executedReceivableSum = executedPayments.filter(p => p.invoiceDirection === 'receivable').reduce((s, p) => s + Number(p.amount), 0)
-    + executedCfs.filter(cf => Number(cf.amount) >= 0).reduce((s, cf) => s + Number(cf.amount), 0);
+    + executedCfs.filter(cf => Number(cf.amount) >= 0).reduce((s, cf) => s + Number(cf.amount), 0)
+    + selectedGroupPayments.filter(p => p.direction === 'receivable').reduce((s, p) => s + Number(p.amount), 0);
   const executedPayableSum = executedPayments.filter(p => p.invoiceDirection === 'payable').reduce((s, p) => s + Number(p.amount), 0)
-    + executedCfs.filter(cf => Number(cf.amount) < 0).reduce((s, cf) => s + Math.abs(Number(cf.amount)), 0);
+    + executedCfs.filter(cf => Number(cf.amount) < 0).reduce((s, cf) => s + Math.abs(Number(cf.amount)), 0)
+    + selectedGroupPayments.filter(p => p.direction === 'payable').reduce((s, p) => s + Number(p.amount), 0);
 
   // 예정 합계 (미완납만)
   const plannedReceivableSum = selectedInvoices.filter(inv => inv.direction === 'receivable')
     .reduce((s, inv) => s + Math.max(0, calcTotal(inv.items) - calcPaid(inv.payments)), 0)
-    + plannedCfs.filter(cf => Number(cf.amount) >= 0).reduce((s, cf) => s + Number(cf.amount), 0);
+    + plannedCfs.filter(cf => Number(cf.amount) >= 0).reduce((s, cf) => s + Number(cf.amount), 0)
+    + selectedGroups.filter(g => g.direction === 'receivable')
+      .reduce((s, g) => s + Math.max(0, g.total - g.payments.reduce((ps, p) => ps + Number(p.amount), 0)), 0);
   const plannedPayableSum = selectedInvoices.filter(inv => inv.direction === 'payable')
     .reduce((s, inv) => s + Math.max(0, calcTotal(inv.items) - calcPaid(inv.payments)), 0)
-    + plannedCfs.filter(cf => Number(cf.amount) < 0).reduce((s, cf) => s + Math.abs(Number(cf.amount)), 0);
+    + plannedCfs.filter(cf => Number(cf.amount) < 0).reduce((s, cf) => s + Math.abs(Number(cf.amount)), 0)
+    + selectedGroups.filter(g => g.direction === 'payable')
+      .reduce((s, g) => s + Math.max(0, g.total - g.payments.reduce((ps, p) => ps + Number(p.amount), 0)), 0);
 
   const cells: Array<number | null> = [];
   for (let i = 0; i < startDow; i++) cells.push(null);
@@ -870,6 +933,28 @@ export default function FinanceCalendarTab() {
                       );
                     })}
 
+                    {/* 월정산 그룹 입금 아이템 */}
+                    {selectedGroupPayments.map((p) => (
+                      <div key={`sgp-${p.id}`} className="rounded-2xl border border-violet-100 bg-violet-50 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            <span className="shrink-0 rounded-full bg-violet-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">월정산</span>
+                            <p className="font-bold text-sm truncate">{p.company_name}</p>
+                          </div>
+                          <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold shrink-0', p.direction === 'receivable' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700')}>
+                            {p.direction === 'receivable' ? '수금' : '지급'}
+                          </span>
+                        </div>
+                        <div className="space-y-0.5 text-xs text-neutral-600">
+                          <div className="flex justify-between">
+                            <span>이번 결제</span>
+                            <span className="font-semibold text-violet-700">{formatCurrency(Number(p.amount))}원</span>
+                          </div>
+                          {p.memo && <p className="text-violet-600 mt-0.5">{p.memo}</p>}
+                        </div>
+                      </div>
+                    ))}
+
                     {/* ★ done 아이템 */}
                     {sortByDirThenName(
                       executedCfs,
@@ -1110,6 +1195,52 @@ export default function FinanceCalendarTab() {
                         );
                       });
                     })()}
+
+                    {/* 월정산 그룹 아이템 */}
+                    {selectedGroups.map((g) => {
+                      const gPaid = g.payments.reduce((s, p) => s + Number(p.amount), 0);
+                      const gRemaining = Math.max(0, g.total - gPaid);
+                      const isDone = gRemaining === 0;
+                      return (
+                        <div key={`sg-${g.id}`} className={cn('rounded-2xl border p-3', isDone ? 'border-neutral-100 bg-neutral-50 opacity-60' : 'border-violet-200 bg-violet-50')}>
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <span className="rounded-full bg-violet-600 px-1.5 py-0.5 text-[9px] font-semibold text-white shrink-0">월정산</span>
+                                <p className="font-bold text-sm truncate">{g.company_name}</p>
+                              </div>
+                              <p className="text-[11px] text-neutral-500 truncate">{g.name}</p>
+                            </div>
+                            <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold shrink-0', g.direction === 'receivable' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700')}>
+                              {g.direction === 'receivable' ? '수금' : '지급'}
+                            </span>
+                          </div>
+                          <div className="space-y-0.5 text-xs text-neutral-600">
+                            <div className="flex justify-between">
+                              <span>전체 금액</span>
+                              <span className="font-semibold">{formatCurrency(g.total)}원</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className={gRemaining > 0 ? 'text-orange-600' : 'text-emerald-600'}>
+                                {g.direction === 'receivable' ? '미수금' : '미지급금'}
+                              </span>
+                              <span className={cn('font-bold', gRemaining > 0 ? 'text-orange-600' : 'text-emerald-600')}>
+                                {gRemaining > 0 ? `${formatCurrency(gRemaining)}원` : '완납'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                            <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium',
+                              g.invoice_status === '발행' ? 'bg-emerald-50 text-emerald-700' :
+                              g.invoice_status === '예정' ? 'bg-blue-50 text-blue-700' :
+                              'bg-neutral-100 text-neutral-500'
+                            )}>
+                              {g.invoice_status === '발행' ? '계산서 발행' : g.invoice_status === '예정' ? '발행예정' : '미발행'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
 
                     {/* ★ planned 아이템 */}
                     {sortByDirThenName(

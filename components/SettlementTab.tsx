@@ -14,6 +14,7 @@ type Props = {
 };
 
 type InvoiceWithItems = Invoice & { items: InvoiceItem[]; payments: Payment[] };
+type SettlementGroupWithPayments = SettlementGroup & { payments: Payment[] };
 
 type InvoiceItemDraft = {
   item_name: string;
@@ -175,11 +176,14 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
   const [dnModal, setDnModal] = useState<DnModal>({ ...EMPTY_DN_MODAL });
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<number>>(new Set());
   const [showSummaryModal, setShowSummaryModal] = useState(false);
-  const [settlementGroups, setSettlementGroups] = useState<SettlementGroup[]>([]);
+  const [settlementGroups, setSettlementGroups] = useState<SettlementGroupWithPayments[]>([]);
   const [showBundleModal, setShowBundleModal] = useState(false);
   const [bundleName, setBundleName] = useState('');
   const [bundleSaving, setBundleSaving] = useState(false);
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(new Set());
+  const [groupPartialPayForm, setGroupPartialPayForm] = useState<{
+    groupId: number; amount: string; date: string; memo: string; saving: boolean; error: string;
+  } | null>(null);
 
   useEffect(() => { void fetchInvoices(); }, []);
 
@@ -188,11 +192,11 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
       setLoading(true);
       const [{ data, error }, { data: groupData }] = await Promise.all([
         supabase.from('invoices').select('*, items:invoice_items(*), payments:payments(*)').order('date', { ascending: false }),
-        supabase.from('settlement_groups').select('*').order('created_at', { ascending: false }),
+        supabase.from('settlement_groups').select('*, payments:payments(*)').order('created_at', { ascending: false }),
       ]);
       if (error) throw error;
       setInvoices((data ?? []) as InvoiceWithItems[]);
-      setSettlementGroups((groupData ?? []) as SettlementGroup[]);
+      setSettlementGroups((groupData ?? []) as SettlementGroupWithPayments[]);
     } catch (error) {
       setErrorText(getErrorMessage(error));
     } finally {
@@ -826,6 +830,56 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
     }
   }
 
+  async function handleGroupDueDateChange(groupId: number, due_date: string | null) {
+    const { error } = await supabase.from('settlement_groups').update({ due_date: due_date || null }).eq('id', groupId);
+    if (error) { setErrorText(getErrorMessage(error)); return; }
+    setSettlementGroups((prev) => prev.map((g) => g.id === groupId ? { ...g, due_date: due_date || null } : g));
+  }
+
+  async function handleGroupInvoiceStatusChange(groupId: number, status: string) {
+    const { error } = await supabase.from('settlement_groups').update({ invoice_status: status }).eq('id', groupId);
+    if (error) { setErrorText(getErrorMessage(error)); return; }
+    setSettlementGroups((prev) => prev.map((g) => g.id === groupId ? { ...g, invoice_status: status } : g));
+  }
+
+  async function handleGroupComplete(groupId: number, remaining: number) {
+    if (remaining <= 0) return;
+    const { error } = await supabase.from('payments').insert({
+      settlement_group_id: groupId, amount: remaining, date: todayString(), memo: '완납',
+    });
+    if (error) { setErrorText(getErrorMessage(error)); return; }
+    await fetchInvoices();
+  }
+
+  async function handleGroupCompleteUndo(groupId: number) {
+    if (!window.confirm('완납을 취소하고 모든 입금 내역을 삭제할까요?')) return;
+    const { error } = await supabase.from('payments').delete().eq('settlement_group_id', groupId);
+    if (error) { setErrorText(getErrorMessage(error)); return; }
+    await fetchInvoices();
+  }
+
+  async function handleGroupPartialPayment() {
+    if (!groupPartialPayForm) return;
+    const { groupId, amount, date, memo } = groupPartialPayForm;
+    const amt = Number(amount);
+    if (!amt || amt <= 0) { setGroupPartialPayForm((p) => p ? { ...p, error: '금액을 입력해줘.' } : null); return; }
+    if (!date) { setGroupPartialPayForm((p) => p ? { ...p, error: '날짜를 입력해줘.' } : null); return; }
+    setGroupPartialPayForm((p) => p ? { ...p, saving: true, error: '' } : null);
+    const { error } = await supabase.from('payments').insert({
+      settlement_group_id: groupId, amount: amt, date, memo: memo.trim() || null,
+    });
+    if (error) { setGroupPartialPayForm((p) => p ? { ...p, saving: false, error: getErrorMessage(error) } : null); return; }
+    setGroupPartialPayForm(null);
+    await fetchInvoices();
+  }
+
+  async function handleDeleteGroupPayment(paymentId: number) {
+    if (!window.confirm('이 입금내역을 삭제할까요?')) return;
+    const { error } = await supabase.from('payments').delete().eq('id', paymentId);
+    if (error) { setErrorText(getErrorMessage(error)); return; }
+    await fetchInvoices();
+  }
+
   async function handleBundle() {
     const name = bundleName.trim();
     if (!name) return;
@@ -858,17 +912,13 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
   }
 
   async function handleUnbundle(groupId: number) {
-    if (!window.confirm('이 월정산 묶음을 해제하시겠습니까?')) return;
+    if (!window.confirm('묶음을 해제하면 입금예정일, 계산서 발행상태, 입금 내역이 모두 삭제됩니다. 계속하시겠습니까?')) return;
     try {
-      const { error: updateErr } = await supabase
-        .from('invoices')
-        .update({ settlement_group_id: null })
-        .eq('settlement_group_id', groupId);
+      const { error: payErr } = await supabase.from('payments').delete().eq('settlement_group_id', groupId);
+      if (payErr) throw payErr;
+      const { error: updateErr } = await supabase.from('invoices').update({ settlement_group_id: null }).eq('settlement_group_id', groupId);
       if (updateErr) throw updateErr;
-      const { error: deleteErr } = await supabase
-        .from('settlement_groups')
-        .delete()
-        .eq('id', groupId);
+      const { error: deleteErr } = await supabase.from('settlement_groups').delete().eq('id', groupId);
       if (deleteErr) throw deleteErr;
       await fetchInvoices();
     } catch (e) {
@@ -1342,6 +1392,10 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
                           const gTotalSupply = gRows.reduce((s, r) => s + r.supply, 0);
                           const gTotalTax = gRows.reduce((s, r) => s + r.tax, 0);
                           const gGrandTotal = gTotalSupply + gTotalTax;
+                          const groupPayments = (settlementGroups.find((g) => g.id === groupId)?.payments ?? []).filter((p) => p.settlement_group_id === groupId);
+                          const gPaid = groupPayments.reduce((s, p) => s + Number(p.amount), 0);
+                          const gRemaining = Math.max(0, gGrandTotal - gPaid);
+                          const isGroupPartialOpen = groupPartialPayForm?.groupId === groupId;
                           return (
                             <div key={`group-${groupId}`} className="rounded-2xl border border-violet-200 bg-violet-50 p-3">
                               <div className="flex items-center justify-between mb-2">
@@ -1353,6 +1407,33 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
                                 <div className="flex items-center gap-1 shrink-0">
                                   <button onClick={() => void handleUnbundle(groupId)} className="rounded-xl border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600">묶음 해제</button>
                                   <button onClick={() => setExpandedGroupIds((prev) => { const next = new Set(prev); if (next.has(groupId)) next.delete(groupId); else next.add(groupId); return next; })} className="px-1 text-sm text-neutral-400">{isGroupExpanded ? '▲' : '▼'}</button>
+                                </div>
+                              </div>
+                              {/* 입금예정일 + 계산서 발행여부 */}
+                              <div className="mb-2 space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <p className="shrink-0 text-xs text-neutral-500">입금예정일</p>
+                                  <input
+                                    type="date"
+                                    value={group.due_date ?? ''}
+                                    onChange={(e) => void handleGroupDueDateChange(groupId, e.target.value || null)}
+                                    className="flex-1 rounded-xl border border-violet-200 bg-white px-2 py-1 text-xs outline-none focus:border-violet-400"
+                                  />
+                                </div>
+                                <div className="grid grid-cols-3 gap-1">
+                                  {(['발행', '예정', '미발행'] as const).map((val) => (
+                                    <button
+                                      key={val}
+                                      onClick={() => void handleGroupInvoiceStatusChange(groupId, val)}
+                                      className={cn('rounded-xl border py-1.5 text-xs font-semibold transition',
+                                        group.invoice_status === val
+                                          ? val === '발행' ? 'border-emerald-600 bg-emerald-600 text-white'
+                                          : val === '예정' ? 'border-blue-500 bg-blue-500 text-white'
+                                          : 'border-neutral-400 bg-neutral-400 text-white'
+                                          : 'border-violet-200 bg-white text-neutral-600'
+                                      )}
+                                    >{val}</button>
+                                  ))}
                                 </div>
                               </div>
                               {gRows.length > 0 && (
@@ -1392,6 +1473,57 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
                                   </table>
                                 </div>
                               )}
+                              {/* 입금 섹션 */}
+                              <div className="rounded-xl border border-violet-200 bg-white p-2 mb-2">
+                                {/* 입금 내역 */}
+                                {groupPayments.length > 0 && (
+                                  <div className="mb-2 space-y-1">
+                                    {[...groupPayments].sort((a, b) => a.date.localeCompare(b.date)).map((p) => (
+                                      <div key={p.id} className="flex items-center justify-between text-xs gap-1">
+                                        <span className="flex-1 text-neutral-500 truncate">{p.date}{p.memo ? ` · ${p.memo}` : ''}</span>
+                                        <span className="font-semibold text-neutral-700 shrink-0">{formatCurrency(p.amount)}원</span>
+                                        <button onClick={() => void handleDeleteGroupPayment(p.id)} className="shrink-0 rounded-lg border border-red-100 bg-red-50 px-1.5 py-0.5 text-[10px] text-red-600">삭제</button>
+                                      </div>
+                                    ))}
+                                    <div className="flex justify-between text-xs font-bold pt-1 border-t border-neutral-100">
+                                      <span className={gRemaining > 0 ? 'text-orange-600' : 'text-emerald-600'}>{gRemaining > 0 ? '잔액' : '완납'}</span>
+                                      <span className={gRemaining > 0 ? 'text-orange-600' : 'text-emerald-600'}>{gRemaining > 0 ? `${formatCurrency(gRemaining)}원` : '완료'}</span>
+                                    </div>
+                                  </div>
+                                )}
+                                {/* 완납 / 일부결제 버튼 */}
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => gRemaining > 0 ? void handleGroupComplete(groupId, gRemaining) : void handleGroupCompleteUndo(groupId)}
+                                    className={cn('flex-1 rounded-xl border py-2 text-xs font-semibold transition',
+                                      gRemaining === 0 ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-violet-200 bg-white text-neutral-600'
+                                    )}
+                                  >
+                                    {gRemaining === 0 ? '✅ 완납' : '완납 처리'}
+                                  </button>
+                                  <button
+                                    onClick={() => setGroupPartialPayForm(isGroupPartialOpen ? null : { groupId, amount: '', date: todayString(), memo: '', saving: false, error: '' })}
+                                    className="flex-1 rounded-xl border border-violet-200 bg-white py-2 text-xs font-semibold text-neutral-600"
+                                  >
+                                    일부결제
+                                  </button>
+                                </div>
+                                {/* 일부결제 폼 */}
+                                {isGroupPartialOpen && groupPartialPayForm && (
+                                  <div className="mt-2 space-y-2">
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <input type="number" inputMode="decimal" placeholder="금액" value={groupPartialPayForm.amount} onChange={(e) => setGroupPartialPayForm((p) => p ? { ...p, amount: e.target.value } : null)} className="rounded-xl border border-violet-200 px-2 py-1.5 text-xs outline-none focus:border-violet-400" />
+                                      <input type="date" value={groupPartialPayForm.date} onChange={(e) => setGroupPartialPayForm((p) => p ? { ...p, date: e.target.value } : null)} className="rounded-xl border border-violet-200 px-2 py-1.5 text-xs outline-none focus:border-violet-400" />
+                                    </div>
+                                    <input placeholder="메모 (선택)" value={groupPartialPayForm.memo} onChange={(e) => setGroupPartialPayForm((p) => p ? { ...p, memo: e.target.value } : null)} className="w-full rounded-xl border border-violet-200 px-2 py-1.5 text-xs outline-none placeholder:text-neutral-400 focus:border-violet-400" />
+                                    {groupPartialPayForm.error && <p className="text-xs text-red-600">{groupPartialPayForm.error}</p>}
+                                    <div className="flex gap-2">
+                                      <button onClick={() => void handleGroupPartialPayment()} disabled={groupPartialPayForm.saving} className="flex-1 rounded-xl bg-violet-600 py-2 text-xs font-semibold text-white disabled:opacity-50">{groupPartialPayForm.saving ? '저장중' : '추가'}</button>
+                                      <button onClick={() => setGroupPartialPayForm(null)} className="flex-1 rounded-xl border border-neutral-200 py-2 text-xs text-neutral-500">취소</button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                               {isGroupExpanded && (
                                 <div className="border-t border-violet-200 pt-2 space-y-2">
                                   {[...groupInvs].sort((a, b) => a.date.localeCompare(b.date)).map((gInv) => {

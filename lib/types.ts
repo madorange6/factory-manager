@@ -79,11 +79,12 @@ export type InvoiceItem = {
 
 export type Payment = {
   id: number;
-  invoice_id: number;
+  invoice_id: number | null;
   amount: number;
   date: string;
   memo?: string | null;
   created_at: string;
+  settlement_group_id?: number | null;
 };
 
 export type Invoice = {
@@ -106,6 +107,8 @@ export type SettlementGroup = {
   id: number;
   company_id: number;
   name: string;
+  due_date?: string | null;
+  invoice_status: string;
   created_at: string;
 };
 
