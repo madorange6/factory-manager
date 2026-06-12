@@ -99,6 +99,14 @@ export type Invoice = {
   note?: string | null;
   created_at: string;
   items?: InvoiceItem[];
+  settlement_group_id?: number | null;
+};
+
+export type SettlementGroup = {
+  id: number;
+  company_id: number;
+  name: string;
+  created_at: string;
 };
 
 export type UnitPrice = {

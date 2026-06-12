@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase/client';
-import { Company, CompanyMemo, DeliveryNoteTemplate, InventoryItem, Invoice, InvoiceItem, Payment } from '../lib/types';
+import { Company, CompanyMemo, DeliveryNoteTemplate, InventoryItem, Invoice, InvoiceItem, Payment, SettlementGroup } from '../lib/types';
 import { cn, formatCurrency, getErrorMessage, todayString } from '../lib/utils';
 
 async function getXLSX() { return import('xlsx'); }
@@ -175,18 +175,24 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
   const [dnModal, setDnModal] = useState<DnModal>({ ...EMPTY_DN_MODAL });
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<number>>(new Set());
   const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [settlementGroups, setSettlementGroups] = useState<SettlementGroup[]>([]);
+  const [showBundleModal, setShowBundleModal] = useState(false);
+  const [bundleName, setBundleName] = useState('');
+  const [bundleSaving, setBundleSaving] = useState(false);
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(new Set());
 
   useEffect(() => { void fetchInvoices(); }, []);
 
   async function fetchInvoices() {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('invoices')
-        .select('*, items:invoice_items(*), payments:payments(*)')
-        .order('date', { ascending: false });
+      const [{ data, error }, { data: groupData }] = await Promise.all([
+        supabase.from('invoices').select('*, items:invoice_items(*), payments:payments(*)').order('date', { ascending: false }),
+        supabase.from('settlement_groups').select('*').order('created_at', { ascending: false }),
+      ]);
       if (error) throw error;
       setInvoices((data ?? []) as InvoiceWithItems[]);
+      setSettlementGroups((groupData ?? []) as SettlementGroup[]);
     } catch (error) {
       setErrorText(getErrorMessage(error));
     } finally {
@@ -820,6 +826,56 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
     }
   }
 
+  async function handleBundle() {
+    const name = bundleName.trim();
+    if (!name) return;
+    const ids = Array.from(selectedInvoiceIds);
+    const firstInv = invoices.find((inv) => ids.includes(inv.id));
+    if (!firstInv) return;
+    try {
+      setBundleSaving(true);
+      const { data: groupRow, error: groupErr } = await supabase
+        .from('settlement_groups')
+        .insert({ company_id: firstInv.company_id, name })
+        .select('id')
+        .single();
+      if (groupErr) throw groupErr;
+      const groupId = (groupRow as { id: number }).id;
+      const { error: updateErr } = await supabase
+        .from('invoices')
+        .update({ settlement_group_id: groupId })
+        .in('id', ids);
+      if (updateErr) throw updateErr;
+      setShowBundleModal(false);
+      setBundleName('');
+      setSelectedInvoiceIds(new Set());
+      await fetchInvoices();
+    } catch (e) {
+      setErrorText(getErrorMessage(e));
+    } finally {
+      setBundleSaving(false);
+    }
+  }
+
+  async function handleUnbundle(groupId: number) {
+    if (!window.confirm('이 월정산 묶음을 해제하시겠습니까?')) return;
+    try {
+      const { error: updateErr } = await supabase
+        .from('invoices')
+        .update({ settlement_group_id: null })
+        .eq('settlement_group_id', groupId);
+      if (updateErr) throw updateErr;
+      const { error: deleteErr } = await supabase
+        .from('settlement_groups')
+        .delete()
+        .eq('id', groupId);
+      if (deleteErr) throw deleteErr;
+      await fetchInvoices();
+    } catch (e) {
+      setErrorText(getErrorMessage(e));
+    }
+  }
+
   // 입금내역 추가 / 수정
   async function handleSavePayment() {
     if (!paymentModal.invoiceId) return;
@@ -1236,14 +1292,150 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
 
                 {isExpanded && (
                   <div className="border-t border-neutral-100 px-3 pb-3 space-y-3 pt-3">
-                    {groupInvoices.map((inv) => {
-                      const totals = calcItemTotals(inv.items);
-                      const paid = calcPaid(inv.payments);
-                      const remaining = Math.max(0, totals.total - paid);
-                      const sortedPayments = [...inv.payments].sort((a, b) => a.date.localeCompare(b.date));
+                    {(() => {
+                      const individualInvs = groupInvoices.filter((inv) => !inv.settlement_group_id);
+                      const groupedByGroupId = new Map<number, InvoiceWithItems[]>();
+                      for (const inv of groupInvoices) {
+                        if (inv.settlement_group_id) {
+                          const existing = groupedByGroupId.get(inv.settlement_group_id) ?? [];
+                          existing.push(inv);
+                          groupedByGroupId.set(inv.settlement_group_id, existing);
+                        }
+                      }
+                      type RenderItem =
+                        | { kind: 'invoice'; inv: InvoiceWithItems; sortDate: string; isDone: boolean }
+                        | { kind: 'group'; groupId: number; sortDate: string };
+                      const renderItems: RenderItem[] = [
+                        ...individualInvs.map((inv) => ({ kind: 'invoice' as const, inv, sortDate: inv.date, isDone: inv.payment_done })),
+                        ...Array.from(groupedByGroupId.entries()).map(([groupId, invs]) => ({
+                          kind: 'group' as const, groupId,
+                          sortDate: invs.reduce((max, inv) => inv.date > max ? inv.date : max, ''),
+                        })),
+                      ];
+                      renderItems.sort((a, b) => {
+                        const aIsDone = a.kind === 'invoice' ? a.isDone : false;
+                        const bIsDone = b.kind === 'invoice' ? b.isDone : false;
+                        if (aIsDone && !bIsDone) return 1;
+                        if (!aIsDone && bIsDone) return -1;
+                        return a.sortDate < b.sortDate ? -1 : a.sortDate > b.sortDate ? 1 : 0;
+                      });
+                      return renderItems.map((item) => {
+                        if (item.kind === 'group') {
+                          const { groupId } = item;
+                          const group = settlementGroups.find((g) => g.id === groupId);
+                          if (!group) return null;
+                          const groupInvs = groupedByGroupId.get(groupId) ?? [];
+                          const isGroupExpanded = expandedGroupIds.has(groupId);
+                          const itemMap = new Map<string, { qty: number; supply: number; tax: number }>();
+                          for (const gInv of groupInvs) {
+                            for (const it of gInv.items) {
+                              const name = it.item_name || '-';
+                              const existing = itemMap.get(name) ?? { qty: 0, supply: 0, tax: 0 };
+                              itemMap.set(name, { qty: existing.qty + Number(it.quantity), supply: existing.supply + Number(it.supply_amount), tax: existing.tax + Number(it.tax_amount) });
+                            }
+                          }
+                          const gRows = Array.from(itemMap.entries()).map(([name, v]) => ({
+                            name, qty: v.qty,
+                            unitPrice: v.qty > 0 ? Math.round(v.supply / v.qty) : 0,
+                            supply: v.supply, tax: v.tax, total: v.supply + v.tax,
+                          }));
+                          const gTotalSupply = gRows.reduce((s, r) => s + r.supply, 0);
+                          const gTotalTax = gRows.reduce((s, r) => s + r.tax, 0);
+                          const gGrandTotal = gTotalSupply + gTotalTax;
+                          return (
+                            <div key={`group-${groupId}`} className="rounded-2xl border border-violet-200 bg-violet-50 p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="shrink-0 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white">월정산</span>
+                                  <span className="truncate text-sm font-semibold text-neutral-800">{group.name}</span>
+                                  <span className="shrink-0 text-xs text-neutral-400">{groupInvs.length}건</span>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button onClick={() => void handleUnbundle(groupId)} className="rounded-xl border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-600">묶음 해제</button>
+                                  <button onClick={() => setExpandedGroupIds((prev) => { const next = new Set(prev); if (next.has(groupId)) next.delete(groupId); else next.add(groupId); return next; })} className="px-1 text-sm text-neutral-400">{isGroupExpanded ? '▲' : '▼'}</button>
+                                </div>
+                              </div>
+                              {gRows.length > 0 && (
+                                <div className="overflow-x-auto mb-2">
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="text-neutral-400 border-b border-violet-200">
+                                        <th className="text-left py-1 pr-2 font-medium">품목</th>
+                                        <th className="text-right py-1 px-1 font-medium">수량</th>
+                                        <th className="text-right py-1 px-1 font-medium">단가</th>
+                                        <th className="text-right py-1 px-1 font-medium">공급가</th>
+                                        <th className="text-right py-1 px-1 font-medium">세액</th>
+                                        <th className="text-right py-1 pl-1 font-medium">총액</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {gRows.map((r) => (
+                                        <tr key={r.name} className="border-t border-violet-100">
+                                          <td className="py-1 pr-2 text-neutral-700">{r.name}</td>
+                                          <td className="py-1 px-1 text-right text-neutral-700">{r.qty.toLocaleString()}</td>
+                                          <td className="py-1 px-1 text-right text-neutral-700">{formatCurrency(r.unitPrice)}</td>
+                                          <td className="py-1 px-1 text-right text-neutral-700">{formatCurrency(r.supply)}</td>
+                                          <td className="py-1 px-1 text-right text-neutral-700">{formatCurrency(r.tax)}</td>
+                                          <td className="py-1 pl-1 text-right font-semibold text-neutral-800">{formatCurrency(r.total)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                    <tfoot>
+                                      <tr className="border-t-2 border-violet-300 font-bold">
+                                        <td className="py-1 pr-2 text-neutral-700">합계</td>
+                                        <td className="py-1 px-1" /><td className="py-1 px-1" />
+                                        <td className="py-1 px-1 text-right text-neutral-800">{formatCurrency(gTotalSupply)}</td>
+                                        <td className="py-1 px-1 text-right text-neutral-800">{formatCurrency(gTotalTax)}</td>
+                                        <td className="py-1 pl-1 text-right text-neutral-900">{formatCurrency(gGrandTotal)}</td>
+                                      </tr>
+                                    </tfoot>
+                                  </table>
+                                </div>
+                              )}
+                              {isGroupExpanded && (
+                                <div className="border-t border-violet-200 pt-2 space-y-2">
+                                  {[...groupInvs].sort((a, b) => a.date.localeCompare(b.date)).map((gInv) => {
+                                    const gInvTotals = calcItemTotals(gInv.items);
+                                    return (
+                                      <div key={gInv.id} className="rounded-xl border border-violet-100 bg-white p-2">
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-semibold', gInv.direction === 'receivable' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700')}>{gInv.direction === 'receivable' ? '매출' : '매입'}</span>
+                                          <span className="text-xs text-neutral-500">{gInv.date.replace(/-/g, '.')}</span>
+                                          {gInv.note && <span className="text-xs text-blue-600 truncate">{gInv.note}</span>}
+                                          <span className="text-xs font-semibold text-neutral-700 ml-auto">{formatCurrency(gInvTotals.total)}원</span>
+                                        </div>
+                                        {gInv.items.length > 0 && (
+                                          <div className="overflow-x-auto">
+                                            <table className="w-full text-xs">
+                                              <tbody>
+                                                {gInv.items.map((it) => (
+                                                  <tr key={it.id} className="border-t border-neutral-100">
+                                                    <td className="py-0.5 pr-2 text-neutral-600">{it.item_name || '-'}</td>
+                                                    <td className="py-0.5 px-1 text-right text-neutral-600">{Number(it.quantity).toLocaleString()}</td>
+                                                    <td className="py-0.5 px-1 text-right text-neutral-600">{formatCurrency(it.supply_amount)}</td>
+                                                    <td className="py-0.5 pl-1 text-right text-neutral-600">{formatCurrency(it.tax_amount)}</td>
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+                        const inv = item.inv;
+                        const totals = calcItemTotals(inv.items);
+                        const paid = calcPaid(inv.payments);
+                        const remaining = Math.max(0, totals.total - paid);
+                        const sortedPayments = [...inv.payments].sort((a, b) => a.date.localeCompare(b.date));
 
-                      // 완료 항목: 접힌/펼친 토글
-                      if (inv.payment_done) {
+                        // 완료 항목: 접힌/펼친 토글
+                        if (inv.payment_done) {
                         const isDoneExpanded = expandedDoneIds.has(inv.id);
                         const lastPaymentDate = inv.payments.length > 0
                           ? [...inv.payments].sort((a, b) => b.date.localeCompare(a.date))[0].date.replace(/-/g, '.')
@@ -1254,19 +1446,21 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
                           <div key={inv.id} className="rounded-2xl border border-neutral-100 bg-neutral-50 opacity-70">
                             {/* 접힌 헤더 */}
                             <div className="flex items-center justify-between gap-2 px-3 py-2">
-                              <input
-                                type="checkbox"
-                                checked={selectedInvoiceIds.has(inv.id)}
-                                onChange={(e) => {
-                                  setSelectedInvoiceIds((prev) => {
-                                    const next = new Set(prev);
-                                    if (e.target.checked) next.add(inv.id); else next.delete(inv.id);
-                                    return next;
-                                  });
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                                className="shrink-0 w-4 h-4 accent-neutral-700"
-                              />
+                              {!inv.settlement_group_id && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedInvoiceIds.has(inv.id)}
+                                  onChange={(e) => {
+                                    setSelectedInvoiceIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (e.target.checked) next.add(inv.id); else next.delete(inv.id);
+                                      return next;
+                                    });
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="shrink-0 w-4 h-4 accent-neutral-700"
+                                />
+                              )}
                               <button
                                 className="flex items-center gap-2 min-w-0 flex-1 text-left"
                                 onClick={() => setExpandedDoneIds((prev) => {
@@ -1343,18 +1537,20 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
                         <div key={inv.id} className="rounded-2xl border border-neutral-200 p-3">
                           <div className="flex items-start justify-between gap-2 mb-2">
                             <div className="flex items-start gap-2 min-w-0 flex-1">
-                              <input
-                                type="checkbox"
-                                checked={selectedInvoiceIds.has(inv.id)}
-                                onChange={(e) => {
-                                  setSelectedInvoiceIds((prev) => {
-                                    const next = new Set(prev);
-                                    if (e.target.checked) next.add(inv.id); else next.delete(inv.id);
-                                    return next;
-                                  });
-                                }}
-                                className="mt-0.5 shrink-0 w-4 h-4 accent-neutral-700"
-                              />
+                              {!inv.settlement_group_id && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedInvoiceIds.has(inv.id)}
+                                  onChange={(e) => {
+                                    setSelectedInvoiceIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (e.target.checked) next.add(inv.id); else next.delete(inv.id);
+                                      return next;
+                                    });
+                                  }}
+                                  className="mt-0.5 shrink-0 w-4 h-4 accent-neutral-700"
+                                />
+                              )}
                               <div>
                                 <p className="text-xs text-neutral-500">{inv.date}{inv.due_date ? ` → 결제예정 ${inv.due_date}` : ''}</p>
                                 {inv.note && <p className="text-xs text-blue-600">{inv.note}</p>}
@@ -1510,7 +1706,8 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
                           </div>
                         </div>
                       );
-                    })}
+                      });
+                    })()}
                   </div>
                 )}
               </div>
@@ -1519,7 +1716,7 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
         </div>
       )}
 
-      {/* 요약 보기 플로팅 버튼 */}
+      {/* 요약 보기 / 월정산 묶기 플로팅 버튼 */}
       {selectedInvoiceIds.size > 0 && (
         <div className="fixed bottom-24 left-0 right-0 flex justify-center z-40 pointer-events-none">
           <div className="pointer-events-auto flex items-center gap-2">
@@ -1530,11 +1727,50 @@ export default function SettlementTab({ companies, inventory, onCompanyAdded }: 
               요약 보기 ({selectedInvoiceIds.size}건)
             </button>
             <button
+              onClick={() => { setBundleName(''); setShowBundleModal(true); }}
+              className="rounded-full bg-violet-600 px-5 py-3 text-sm font-semibold text-white shadow-lg"
+            >
+              월정산 묶기
+            </button>
+            <button
               onClick={() => setSelectedInvoiceIds(new Set())}
               className="rounded-full border border-neutral-300 bg-white px-4 py-3 text-sm font-semibold text-neutral-600 shadow-lg"
             >
               취소
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 월정산 묶기 모달 */}
+      {showBundleModal && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setShowBundleModal(false)}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-10" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-base font-bold">월정산 묶기 ({selectedInvoiceIds.size}건)</p>
+              <button onClick={() => setShowBundleModal(false)} className="rounded-full border border-neutral-200 px-3 py-1 text-xs">닫기</button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <p className="mb-1 text-xs text-neutral-500">그룹명 (예: 5월 정산-0610발행)</p>
+                <input
+                  type="text"
+                  value={bundleName}
+                  onChange={(e) => setBundleName(e.target.value)}
+                  placeholder="그룹명 입력"
+                  className="w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+                  autoFocus
+                  onKeyDown={(e) => { if (e.key === 'Enter' && bundleName.trim()) void handleBundle(); }}
+                />
+              </div>
+              <button
+                onClick={() => void handleBundle()}
+                disabled={bundleSaving || !bundleName.trim()}
+                className="w-full rounded-2xl bg-violet-600 px-4 py-4 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {bundleSaving ? '저장중' : '확인'}
+              </button>
+            </div>
           </div>
         </div>
       )}
