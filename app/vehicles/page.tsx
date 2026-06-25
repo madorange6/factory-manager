@@ -140,12 +140,12 @@ export default function VehiclesPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`,
+          'Authorization': `Bearer ${session?.access_token ?? ''}`,
         },
         body: JSON.stringify({ vehicle_id: vehicle.id }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? '오류');
+      const text = await res.text();
+      if (!res.ok) throw new Error(`${res.status}: ${text}`);
       alert('테스트 발송 완료');
     } catch (err) {
       alert('발송 실패: ' + String(err));
