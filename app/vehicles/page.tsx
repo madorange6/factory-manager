@@ -29,6 +29,7 @@ type TelegramPopup = {
   vehicle: Vehicle;
   enabled: boolean;
   days: number;
+  smsHour: number | null;
   saving: boolean;
 };
 
@@ -46,6 +47,7 @@ export default function VehiclesPage() {
   const [saving, setSaving] = useState(false);
   const [errorText, setErrorText] = useState('');
   const [telegramPopup, setTelegramPopup] = useState<TelegramPopup | null>(null);
+  const [testingId, setTestingId] = useState<string | null>(null);
 
   useEffect(() => {
     void init();
@@ -122,11 +124,34 @@ export default function VehiclesPage() {
     const { error } = await supabase.from('vehicles').update({
       telegram_notify: telegramPopup.enabled,
       telegram_notify_days: telegramPopup.days,
+      sms_notify_hour_kst: telegramPopup.smsHour,
       updated_at: new Date().toISOString(),
     }).eq('id', telegramPopup.vehicle.id);
     if (error) { setErrorText(getErrorMessage(error)); setTelegramPopup(null); return; }
     setTelegramPopup(null);
     await fetchVehicles();
+  }
+
+  async function handleSmsTest(vehicle: Vehicle) {
+    setTestingId(vehicle.id);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/api/notify/vehicle-sms-test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ vehicle_id: vehicle.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? '오류');
+      alert('테스트 발송 완료');
+    } catch (err) {
+      alert('발송 실패: ' + String(err));
+    } finally {
+      setTestingId(null);
+    }
   }
 
   async function handleDelete(id: string, name: string) {
@@ -303,7 +328,14 @@ export default function VehiclesPage() {
                       </div>
                       <div className="flex gap-1.5 shrink-0 ml-2">
                         <button
-                          onClick={() => setTelegramPopup({ vehicle: v, enabled: v.telegram_notify ?? false, days: v.telegram_notify_days ?? 7, saving: false })}
+                          onClick={() => void handleSmsTest(v)}
+                          disabled={testingId === v.id}
+                          className="rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50 disabled:opacity-50"
+                        >
+                          {testingId === v.id ? '발송중' : '📨'}
+                        </button>
+                        <button
+                          onClick={() => setTelegramPopup({ vehicle: v, enabled: v.telegram_notify ?? false, days: v.telegram_notify_days ?? 7, smsHour: v.sms_notify_hour_kst ?? null, saving: false })}
                           className={cn(
                             'rounded-xl border px-2.5 py-1.5 text-xs font-medium',
                             v.telegram_notify ? 'border-blue-200 bg-blue-50 text-blue-600' : 'border-neutral-200 bg-white text-neutral-400',
@@ -434,6 +466,22 @@ export default function VehiclesPage() {
                   <p className="text-sm">일 전</p>
                 </div>
               )}
+              <div className="border-t border-neutral-100 pt-4">
+                <p className="mb-2 text-sm font-medium">SMS 알림 시간 (KST)</p>
+                <div className="flex items-center gap-3">
+                  <select
+                    value={telegramPopup.smsHour ?? ''}
+                    onChange={(e) => setTelegramPopup((p) => p && ({ ...p, smsHour: e.target.value === '' ? null : Number(e.target.value) }))}
+                    className="rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                  >
+                    <option value="">기본값 사용</option>
+                    {Array.from({ length: 24 }, (_, i) => (
+                      <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-neutral-400">{telegramPopup.smsHour == null ? '(morning_finance 시간)' : `매일 ${String(telegramPopup.smsHour).padStart(2, '0')}:00 발송`}</p>
+                </div>
+              </div>
               <p className="text-xs text-neutral-400">※ 만기 당일에는 항상 알림이 발송됩니다.</p>
               <button
                 onClick={() => void handleTelegramNotifySave()}

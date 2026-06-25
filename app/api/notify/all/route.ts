@@ -178,16 +178,20 @@ export async function GET(request: Request) {
       return s ? ((s.notify_hour_kst - 9 + 24) % 24) : 0;
     })();
 
-    if (testMode || currentHour === morningHour) {
+    {
       const d30Str = addDaysToDate(today, 30);
       const d15AgoStr = addDaysToDate(today, -15);
 
       const { data: smsVehicles } = await supabase
         .from('vehicles')
-        .select('name, plate_number, inspection_date, recipient_phone, is_inspected');
+        .select('name, plate_number, inspection_date, recipient_phone, is_inspected, sms_notify_hour_kst');
 
-      for (const v of (smsVehicles ?? []) as unknown as { name: string; plate_number: string; inspection_date: string; recipient_phone: string; is_inspected: boolean }[]) {
+      for (const v of (smsVehicles ?? []) as unknown as { name: string; plate_number: string; inspection_date: string; recipient_phone: string; is_inspected: boolean; sms_notify_hour_kst: number | null }[]) {
         if (!v.recipient_phone) continue;
+
+        // 차량별 시간 설정이 있으면 그 시간, 없으면 morning_finance 시간
+        const vehicleUtcHour = v.sms_notify_hour_kst != null ? ((v.sms_notify_hour_kst - 9 + 24) % 24) : morningHour;
+        if (!testMode && currentHour !== vehicleUtcHour) continue;
 
         let label: string | null = null;
         let msg: string | null = null;

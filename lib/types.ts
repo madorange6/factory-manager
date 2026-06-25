@@ -188,6 +188,7 @@ export type Vehicle = {
   insured_at: string | null;
   telegram_notify: boolean;
   telegram_notify_days: number;
+  sms_notify_hour_kst: number | null;
   created_at: string;
   updated_at: string;
 };
