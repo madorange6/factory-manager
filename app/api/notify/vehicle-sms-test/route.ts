@@ -10,24 +10,19 @@ export async function POST(request: Request) {
   const token = authHeader?.replace('Bearer ', '');
   if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const supabaseUser = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { global: { headers: { Authorization: `Bearer ${token}` } } }
-  );
-  const { data: { user }, error: authError } = await supabaseUser.auth.getUser();
-  if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const { data: profile } = await supabaseUser.from('profiles').select('email').eq('id', user.id).maybeSingle();
-  const email = (profile as { email: string } | null)?.email ?? user.email ?? '';
-  if (email !== ADMIN_EMAIL) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-
-  const { vehicle_id } = await request.json() as { vehicle_id: string };
-
   const supabaseAdmin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
+
+  const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
+  if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { data: profile } = await supabaseAdmin.from('profiles').select('email').eq('id', user.id).maybeSingle();
+  const email = (profile as { email: string } | null)?.email ?? user.email ?? '';
+  if (email !== ADMIN_EMAIL) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  const { vehicle_id } = await request.json() as { vehicle_id: string };
 
   const { data: vehicle, error } = await supabaseAdmin.from('vehicles').select('*').eq('id', vehicle_id).single();
   if (error || !vehicle) return NextResponse.json({ error: '차량 없음' }, { status: 404 });
