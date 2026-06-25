@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { sendTelegramMessage } from '@/lib/telegram';
 
 function dateStr(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -35,6 +36,8 @@ async function sendSms(to: string, text: string) {
     const body = await res.text();
     throw new Error(`SOLAPI error: ${body}`);
   }
+
+  await sendTelegramMessage(`📱 <b>[SMS 발송]</b>\n수신: ${to}\n\n${text}`);
 }
 
 async function makeSignature(secret: string, date: string, salt: string): Promise<string> {

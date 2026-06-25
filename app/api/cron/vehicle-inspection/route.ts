@@ -1,5 +1,7 @@
+// 이 route는 app/api/notify/all/route.ts 로 통합됨 — 직접 호출하지 않음
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { sendTelegramMessage } from '@/lib/telegram';
 
 function dateStr(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -35,6 +37,8 @@ async function sendSms(to: string, text: string) {
     const body = await res.text();
     throw new Error(`SOLAPI error: ${body}`);
   }
+
+  await sendTelegramMessage(`📱 <b>[SMS 발송]</b>\n수신: ${to}\n\n${text}`);
 }
 
 async function makeSignature(secret: string, date: string, salt: string): Promise<string> {
@@ -51,7 +55,13 @@ async function makeSignature(secret: string, date: string, salt: string): Promis
   return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const authHeader = request.headers.get('authorization');
+  const secret = authHeader?.replace('Bearer ', '');
+  if (secret !== process.env.CRON_SECRET) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -61,7 +71,7 @@ export async function GET() {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    today.setUTCHours(0, 0, 0, 0);
 
     const todayStr = dateStr(today);
     const d30Str = dateStr(addDays(today, 30));

@@ -1,3 +1,5 @@
+import { sendTelegramMessage } from '@/lib/telegram';
+
 async function makeSignature(secret: string, date: string, salt: string): Promise<string> {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
@@ -34,4 +36,6 @@ export async function sendSms(to: string, text: string) {
     const body = await res.text();
     throw new Error(`SOLAPI error: ${body}`);
   }
+
+  await sendTelegramMessage(`📱 <b>[SMS 발송]</b>\n수신: ${to}\n\n${text}`);
 }

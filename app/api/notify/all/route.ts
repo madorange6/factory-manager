@@ -18,6 +18,16 @@ type NotifySetting = {
   notify_hour_kst: number;
 };
 
+function maskPhone(phone: string): string {
+  return phone.replace(/(\d{3})-?(\d{4})-?(\d{4})/, '$1-****-$3');
+}
+
+function addDaysToDate(dateStr: string, days: number): string {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().split('T')[0];
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function fetchMessageContents(supabase: any, ids: number[]): Promise<Map<number, string>> {
   if (ids.length === 0) return new Map();
@@ -26,10 +36,16 @@ async function fetchMessageContents(supabase: any, ids: number[]): Promise<Map<n
 }
 
 export async function GET(request: Request) {
-  const secret = request.headers.get('x-cron-secret');
+  const { searchParams } = new URL(request.url);
+  const secret = searchParams.get('secret') ?? request.headers.get('authorization')?.replace('Bearer ', '');
   if (secret !== process.env.CRON_SECRET) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  // test_date: 날짜 오버라이드 (?test_date=2026-06-25)
+  // test_mode: true이면 실제 발송 없이 콘솔 로그만 출력
+  const testDateParam = searchParams.get('test_date');
+  const testMode = searchParams.get('test_mode') === 'true';
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -37,8 +53,18 @@ export async function GET(request: Request) {
   );
 
   const now = new Date();
-  const today = now.toISOString().split('T')[0];
+  // KST 기준 오늘 날짜 (UTC+9)
+  const today = testDateParam ?? new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
   const currentHour = now.getUTCHours();
+
+  async function notify(msg: string) {
+    if (testMode) { console.log('[TEST TELEGRAM]', msg); return; }
+    await sendTelegramMessage(msg);
+  }
+  async function notifySms(to: string, text: string) {
+    if (testMode) { console.log('[TEST SMS]', to, text); return; }
+    await sendSms(to, text);
+  }
 
   const { data: settingsData } = await supabase.from('notify_settings').select('key, is_enabled, notify_hour_kst');
   const settingsMap = new Map((settingsData ?? [] as NotifySetting[]).map((s: NotifySetting) => [s.key, s]));
@@ -46,6 +72,7 @@ export async function GET(request: Request) {
   function shouldRun(key: string): boolean {
     const s = settingsMap.get(key);
     if (!s || !s.is_enabled) return false;
+    if (testMode) return true;
     return ((s.notify_hour_kst - 9 + 24) % 24) === currentHour;
   }
 
@@ -81,15 +108,13 @@ export async function GET(request: Request) {
     }
 
     if (morningMessages.length > 0) {
-      await sendTelegramMessage('📢 <b>[오전 알림]</b> 오늘 납부 일정입니다\n\n' + morningMessages.join('\n'));
+      await notify('📢 <b>[오전 알림]</b> 오늘 납부 일정입니다\n\n' + morningMessages.join('\n'));
     }
 
     // 보험 만기 알림 — insurances 테이블
     // 차량보험: D-7, 당일 / 화재보험: D-30, D-7, 당일
     for (const days of [30, 7, 0]) {
-      const targetDate = new Date(now);
-      targetDate.setDate(now.getDate() + days);
-      const dateStr = targetDate.toISOString().split('T')[0];
+      const dateStr = addDaysToDate(today, days);
 
       const { data: insurances } = await supabase
         .from('insurances')
@@ -105,35 +130,91 @@ export async function GET(request: Request) {
           : `🛡️ <b>[보험 만기 알림]</b>\n\n${ins.insurance_name}${companyText}\n만기일: ${ins.expiry_date}\n${days}일 후 만료 예정입니다.`;
 
         if (ins.notify_telegram) {
-          await sendTelegramMessage(msg);
+          await notify(msg);
         }
         if (ins.notify_sms && ins.recipient_phone) {
           const plainMsg = msg.replace(/<[^>]+>/g, '');
-          await sendSms(ins.recipient_phone, plainMsg);
+          await notifySms(ins.recipient_phone, plainMsg);
         }
       }
     }
 
-    // 차량검사 텔레그램 알림
-    const { data: telegramVehicles } = await supabase
-      .from('vehicles')
-      .select('name, plate_number, inspection_date, telegram_notify_days')
-      .eq('telegram_notify', true);
+  }
 
-    for (const v of (telegramVehicles ?? []) as unknown as { name: string; plate_number: string; inspection_date: string; telegram_notify_days: number }[]) {
-      const notifyDays = v.telegram_notify_days ?? 7;
-      const notifyDate = new Date(now);
-      notifyDate.setDate(now.getDate() + notifyDays);
-      const notifyDateStr = notifyDate.toISOString().split('T')[0];
+  // ── 차량검사 텔레그램 알림 (morning_finance 독립 실행) ────
+  {
+    const morningHour = (() => {
+      const s = settingsMap.get('morning_finance') as NotifySetting | undefined;
+      return s ? ((s.notify_hour_kst - 9 + 24) % 24) : 0;
+    })();
 
-      if (v.inspection_date === notifyDateStr) {
-        await sendTelegramMessage(
-          `🚗 <b>[차량검사 알림]</b>\n\n${v.name} (${v.plate_number})\n검사 만료일: ${v.inspection_date}\n${notifyDays}일 후 만료 예정입니다.`
-        );
-      } else if (v.inspection_date === today) {
-        await sendTelegramMessage(
-          `🚗 <b>[차량검사 알림]</b>\n\n${v.name} (${v.plate_number})\n오늘이 검사 만료일입니다.`
-        );
+    if (testMode || currentHour === morningHour) {
+      const { data: telegramVehicles } = await supabase
+        .from('vehicles')
+        .select('name, plate_number, inspection_date, telegram_notify_days')
+        .eq('telegram_notify', true);
+
+      for (const v of (telegramVehicles ?? []) as unknown as { name: string; plate_number: string; inspection_date: string; telegram_notify_days: number }[]) {
+        const notifyDays = v.telegram_notify_days ?? 7;
+        const notifyDateStr = addDaysToDate(today, notifyDays);
+
+        if (v.inspection_date === notifyDateStr) {
+          await notify(
+            `🚗 <b>[차량검사 알림]</b>\n\n${v.name} (${v.plate_number})\n검사 만료일: ${v.inspection_date}\n${notifyDays}일 후 만료 예정입니다.`
+          );
+        } else if (v.inspection_date === today) {
+          await notify(
+            `🚗 <b>[차량검사 알림]</b>\n\n${v.name} (${v.plate_number})\n오늘이 검사 만료일입니다.`
+          );
+        }
+      }
+    }
+  }
+
+  // ── 차량검사 SMS 알림 ─────────────────────────────────
+  {
+    const morningHour = (() => {
+      const s = settingsMap.get('morning_finance') as NotifySetting | undefined;
+      return s ? ((s.notify_hour_kst - 9 + 24) % 24) : 0;
+    })();
+
+    if (testMode || currentHour === morningHour) {
+      const d30Str = addDaysToDate(today, 30);
+      const d15AgoStr = addDaysToDate(today, -15);
+
+      const { data: smsVehicles } = await supabase
+        .from('vehicles')
+        .select('name, plate_number, inspection_date, recipient_phone, is_inspected');
+
+      for (const v of (smsVehicles ?? []) as unknown as { name: string; plate_number: string; inspection_date: string; recipient_phone: string; is_inspected: boolean }[]) {
+        if (!v.recipient_phone) continue;
+
+        let label: string | null = null;
+        let msg: string | null = null;
+
+        if (v.inspection_date === d30Str) {
+          label = 'D-30';
+          msg = `[차량검사 D-30]\n${v.name}(${v.plate_number}) 정기검사일이 30일 남았습니다.\n검사일: ${v.inspection_date}`;
+        } else if (v.inspection_date === today && !v.is_inspected) {
+          label = 'D-day';
+          msg = `[차량검사 당일]\n${v.name}(${v.plate_number}) 오늘 정기검사일입니다.\n검사일: ${v.inspection_date}`;
+        } else if (v.inspection_date === d15AgoStr && !v.is_inspected) {
+          label = 'D+15';
+          msg = `[차량검사 미완료 경고]\n${v.name}(${v.plate_number}) 정기검사일이 15일 지났습니다.\n검사를 완료해주세요.`;
+        }
+
+        if (!label || !msg) continue;
+
+        try {
+          await notifySms(v.recipient_phone, msg);
+          await notify(
+            `✅ <b>[차량검사 SMS 발송 완료]</b>\n차량: ${v.name} (${v.plate_number})\n수신: ${maskPhone(v.recipient_phone)}\n검사만료일: ${v.inspection_date}\n발송 시점: ${label}`
+          );
+        } catch (err) {
+          await notify(
+            `❌ <b>[차량검사 SMS 발송 실패]</b>\n차량: ${v.name} (${v.plate_number})\n검사만료일: ${v.inspection_date}\n오류: ${String(err)}`
+          );
+        }
       }
     }
   }
@@ -170,7 +251,7 @@ export async function GET(request: Request) {
     }
 
     if (eveningMessages.length > 0) {
-      await sendTelegramMessage('⚠️ <b>[미납 재알림]</b> 아직 미체크 항목이 있습니다\n\n' + eveningMessages.join('\n'));
+      await notify('⚠️ <b>[미납 재알림]</b> 아직 미체크 항목이 있습니다\n\n' + eveningMessages.join('\n'));
     }
   }
 
@@ -190,7 +271,7 @@ export async function GET(request: Request) {
         const prefix = it.quadrant === 'urgent_important' ? '🔴' : '🟠';
         return `${prefix} ${it.title}`;
       });
-      await sendTelegramMessage(`⏰ <b>[할일 체크]</b> 미완료 긴급 항목\n\n${lines.join('\n')}`);
+      await notify(`⏰ <b>[할일 체크]</b> 미완료 긴급 항목\n\n${lines.join('\n')}`);
     }
   }
 
@@ -207,11 +288,11 @@ export async function GET(request: Request) {
     for (const it of (itemNotifs ?? []) as { title: string; quadrant: string; notify_hour_kst: number }[]) {
       if (it.notify_hour_kst == null) continue;
       const utcHour = ((it.notify_hour_kst - 9 + 24) % 24);
-      if (utcHour !== currentHour) continue;
+      if (!testMode && utcHour !== currentHour) continue;
       const prefix = it.quadrant === 'urgent_important' ? '🔴'
         : it.quadrant === 'urgent_not_important' ? '🟠'
         : it.quadrant === 'not_urgent_important' ? '🔵' : '⚫';
-      await sendTelegramMessage(`🔔 <b>[할일 알림]</b>\n\n${prefix} ${it.title}`);
+      await notify(`🔔 <b>[할일 알림]</b>\n\n${prefix} ${it.title}`);
     }
   }
 
@@ -228,14 +309,14 @@ export async function GET(request: Request) {
   for (const alert of ddayAlerts) {
     const alertHourKST = parseInt(alert.repeat_time?.substring(0, 2) ?? '9');
     const utcAlertHour = (alertHourKST - 9 + 24) % 24;
-    if (utcAlertHour !== currentHour) continue;
+    if (!testMode && utcAlertHour !== currentHour) continue;
 
     if (!alert.target_date || !alert.alert_days) continue;
     const target = new Date(alert.target_date);
     const diffDays = Math.round((target.getTime() - new Date(today).getTime()) / (1000 * 60 * 60 * 24));
     if (alert.alert_days.includes(diffDays)) {
       const label = diffDays === 0 ? '오늘' : `D-${diffDays}`;
-      await sendTelegramMessage(
+      await notify(
         `🔔 <b>[채팅 알림] ${label}</b>\n\n${ddayMsgMap.get(alert.chat_id) ?? '내용 없음'}\n\n기준일: ${alert.target_date}`
       );
     }
@@ -251,14 +332,14 @@ export async function GET(request: Request) {
   const repeatAlerts = (repeatRaw ?? []) as NotifRow[];
   const repeatMsgMap = await fetchMessageContents(supabase, repeatAlerts.map((a) => a.chat_id));
 
-  const todayDate = new Date(today);
-  const dayOfWeek = todayDate.getDay();
-  const dayOfMonth = todayDate.getDate();
+  const todayDate = new Date(today + 'T00:00:00Z');
+  const dayOfWeek = todayDate.getUTCDay();
+  const dayOfMonth = todayDate.getUTCDate();
 
   for (const alert of repeatAlerts) {
     const alertHourKST = parseInt(alert.repeat_time?.substring(0, 2) ?? '9');
     const utcAlertHour = (alertHourKST - 9 + 24) % 24;
-    if (utcAlertHour !== currentHour) continue;
+    if (!testMode && utcAlertHour !== currentHour) continue;
 
     let shouldSend = false;
     if (alert.repeat_type === 'daily') {
@@ -270,9 +351,9 @@ export async function GET(request: Request) {
     }
 
     if (shouldSend) {
-      await sendTelegramMessage(`🔔 <b>[반복 알림]</b>\n\n${repeatMsgMap.get(alert.chat_id) ?? '내용 없음'}`);
+      await notify(`🔔 <b>[반복 알림]</b>\n\n${repeatMsgMap.get(alert.chat_id) ?? '내용 없음'}`);
     }
   }
 
-  return Response.json({ ok: true });
+  return Response.json({ ok: true, testMode, today });
 }

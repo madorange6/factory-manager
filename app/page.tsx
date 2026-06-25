@@ -78,9 +78,22 @@ export default function Page() {
   }
 
   async function fetchMessages() {
-    const { data, error } = await supabase.from('messages').select('id, content, message_type, source, created_at, user_id, user_email, user_name, is_important, parent_id').order('created_at', { ascending: false }).limit(200);
-    if (error) throw error;
-    setMessages(((data ?? []) as MessageRow[]).reverse());
+    const sel = 'id, content, message_type, source, created_at, user_id, user_email, user_name, is_important, parent_id';
+    const [{ data: recent, error: e1 }, { data: important, error: e2 }] = await Promise.all([
+      supabase.from('messages').select(sel).order('created_at', { ascending: false }).limit(400),
+      supabase.from('messages').select(sel).eq('is_important', true),
+    ]);
+    if (e1) throw e1;
+    if (e2) throw e2;
+    const seen = new Set<number>();
+    const merged: MessageRow[] = [];
+    for (const m of [...(recent ?? []), ...(important ?? [])]) {
+      if (!seen.has(m.id as number)) {
+        seen.add(m.id as number);
+        merged.push(m as MessageRow);
+      }
+    }
+    setMessages(merged.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()));
   }
 
   async function fetchLogs() {
