@@ -22,15 +22,24 @@ export async function POST(request: Request) {
   const email = (profile as { email: string } | null)?.email ?? user.email ?? '';
   if (email !== ADMIN_EMAIL) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const { vehicle_id } = await request.json() as { vehicle_id: string };
+  let vehicle_id: string;
+  try {
+    const body = await request.json() as { vehicle_id: string };
+    vehicle_id = body.vehicle_id;
+  } catch (e) {
+    return NextResponse.json({ error: 'body 파싱 실패: ' + String(e) }, { status: 400 });
+  }
 
   const { data: vehicle, error } = await supabaseAdmin.from('vehicles').select('*').eq('id', vehicle_id).single();
-  if (error || !vehicle) return NextResponse.json({ error: '차량 없음' }, { status: 404 });
+  if (error || !vehicle) return NextResponse.json({ error: '차량 없음: ' + String(error?.message) }, { status: 404 });
   if (!vehicle.recipient_phone) return NextResponse.json({ error: '수신번호 없음' }, { status: 400 });
 
-  const msg = `[차량검사 테스트]\n${vehicle.name}(${vehicle.plate_number})\n검사 만료일: ${vehicle.inspection_date}`;
-  await sendSms(vehicle.recipient_phone as string, msg);
-  await sendTelegramMessage(`📨 <b>[차량검사 테스트 발송]</b>\n차량: ${vehicle.name} (${vehicle.plate_number})\n검사만료일: ${vehicle.inspection_date}`);
-
-  return NextResponse.json({ ok: true });
+  try {
+    const msg = `[차량검사 테스트]\n${vehicle.name}(${vehicle.plate_number})\n검사 만료일: ${vehicle.inspection_date}`;
+    await sendSms(vehicle.recipient_phone as string, msg);
+    await sendTelegramMessage(`📨 <b>[차량검사 테스트 발송]</b>\n차량: ${vehicle.name} (${vehicle.plate_number})\n검사만료일: ${vehicle.inspection_date}`);
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return NextResponse.json({ error: '발송 실패: ' + String(e) }, { status: 500 });
+  }
 }
