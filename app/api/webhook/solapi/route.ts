@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   const label = isSuccess ? '발송 완료' : '발송 실패';
 
   await sendTelegramMessage(
-    `${icon} <b>[SOLAPI ${label}]</b>\n발신: ${from}\n수신: ${to}${network}\n유형: ${type}\n상태: ${statusMsg}(${status})`
+    `${icon} <b>[SOLAPI ${label}]</b>\n발신: ${from}\n수신: ${to}${network}\n유형: ${type}\n상태: ${statusMsg}(${status})\n\n<code>${JSON.stringify(payload, null, 2).slice(0, 500)}</code>`
   );
 
   return NextResponse.json({ ok: true });
